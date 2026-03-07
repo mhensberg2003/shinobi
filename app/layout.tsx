@@ -17,6 +17,11 @@ const syne = Syne({
 export const metadata: Metadata = {
   title: "Shinobi",
   description: "Personal streaming app for anime, TV shows, and movies.",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

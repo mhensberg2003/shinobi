@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { MediaSearchItem } from "@/lib/media/types";
@@ -56,11 +57,10 @@ export function Nav() {
     >
       {/* pill nav */}
       <nav style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 2, height: 42, padding: "0 6px", borderRadius: 999, background: "rgba(28,28,28,0.85)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 2px 20px rgba(0,0,0,0.4)" }}>
-        <Link href="/" onClick={close} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.08)", color: "#fff", marginRight: 4 }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        <Link href="/" onClick={close} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: "50%", background: "transparent", color: "#fff", marginRight: 4, overflow: "hidden" }}>
+          <Image src="/logo.png" alt="Shinobi" width={24} height={24} style={{ width: 24, height: 24, objectFit: "contain" }} />
         </Link>
         <Link href="/" onClick={close} style={{ padding: "0 14px", fontSize: 13, fontWeight: 500, color: "#fff", height: 42, display: "flex", alignItems: "center" }}>Home</Link>
-        <Link href="/debug/seedbox" onClick={close} style={{ padding: "0 14px", fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.5)", height: 42, display: "flex", alignItems: "center" }}>Seedbox</Link>
         <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
         <button
           type="button"

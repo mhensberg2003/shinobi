@@ -63,8 +63,51 @@ function fmt(s: number): string {
 function readProgress(key: string): StoredProgress | null {
   try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; } catch { return null; }
 }
+
+function looksLikeTorrentTitle(value?: string | null): boolean {
+  if (!value) return false;
+
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+
+  return (
+    /\.[a-z0-9]{2,4}$/i.test(trimmed) ||
+    /(?:bluray|brrip|webrip|web-dl|hdtv|x264|x265|hevc|aac|10bit|2160p|1080p|720p)/i.test(trimmed) ||
+    (trimmed.includes(".") && !trimmed.includes(" "))
+  );
+}
+
+function resolvePreferredTitle(currentTitle: string, savedTitle?: string): string {
+  if (!savedTitle) {
+    return currentTitle;
+  }
+
+  if (!currentTitle) {
+    return savedTitle;
+  }
+
+  if (looksLikeTorrentTitle(currentTitle) && !looksLikeTorrentTitle(savedTitle)) {
+    return savedTitle;
+  }
+
+  return currentTitle;
+}
+
 function writeProgress(key: string, p: StoredProgress) {
-  try { localStorage.setItem(key, JSON.stringify(p)); } catch {}
+  try {
+    const existing = readProgress(key);
+    const resolvedTitle = resolvePreferredTitle(p.title, existing?.title);
+    const next: StoredProgress = {
+      ...existing,
+      ...p,
+      title: resolvedTitle || existing?.title || "Untitled",
+      posterUrl: p.posterUrl || existing?.posterUrl,
+      episodeNumber: p.episodeNumber ?? existing?.episodeNumber,
+      episodeTotal: p.episodeTotal ?? existing?.episodeTotal,
+    };
+
+    localStorage.setItem(key, JSON.stringify(next));
+  } catch {}
 }
 
 // SVG icons
@@ -156,6 +199,13 @@ export function WatchPlayer({
   const [selectedSub, setSelectedSub] = useState<number | null>(null);
   const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
+  const effectiveTitle = resolvePreferredTitle(title, saved?.title);
+  const effectiveEpisodeNumber = episodeNumber ?? saved?.episodeNumber;
+  const effectiveEpisodeTotal = episodeTotal ?? saved?.episodeTotal;
+  const topBarTitle =
+    effectiveEpisodeNumber != null
+      ? `${effectiveTitle} • Episode ${effectiveEpisodeNumber}${effectiveEpisodeTotal != null ? `/${effectiveEpisodeTotal}` : ""}`
+      : effectiveTitle;
 
   useEffect(() => {
     const p = playerRef.current;
@@ -268,14 +318,14 @@ export function WatchPlayer({
       externalAudio?.pause();
       if (!p) return;
       setPlaying(false);
-      if (p.currentTime > 0) writeProgress(storageKey, { title, currentTime: p.currentTime, duration: Number.isFinite(p.duration) ? p.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber, episodeTotal });
+      if (p.currentTime > 0) writeProgress(storageKey, { title: effectiveTitle, currentTime: p.currentTime, duration: Number.isFinite(p.duration) ? p.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal });
       setShowControls(true);
     }
     function onEnded() {
       const externalAudio = externalAudioRef.current;
       externalAudio?.pause();
       externalAudio?.removeAttribute("src");
-      writeProgress(storageKey, { title, currentTime: 0, duration: 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber, episodeTotal });
+      writeProgress(storageKey, { title: effectiveTitle, currentTime: 0, duration: 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal });
       setPlaying(false);
       setShowControls(true);
     }
@@ -338,7 +388,7 @@ export function WatchPlayer({
 
     const interval = window.setInterval(() => {
       if (!video.paused && video.currentTime > 0)
-        writeProgress(storageKey, { title, currentTime: video.currentTime, duration: Number.isFinite(video.duration) ? video.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber, episodeTotal });
+        writeProgress(storageKey, { title: effectiveTitle, currentTime: video.currentTime, duration: Number.isFinite(video.duration) ? video.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal });
     }, 5000);
 
     return () => {
@@ -359,7 +409,7 @@ export function WatchPlayer({
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("addtrack", onAudioTrackListChange);
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("removetrack", onAudioTrackListChange);
     };
-  }, [restored, saved, storageKey, subtitles, title, posterUrl, episodeNumber, episodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId]);
+  }, [restored, saved, storageKey, subtitles, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId]);
 
   useEffect(() => {
     const video = playerRef.current;
@@ -614,7 +664,7 @@ export function WatchPlayer({
               <polyline points="15,18 9,12 15,6" />
             </svg>
           </button>
-          <p style={{ fontSize: 14, fontWeight: 500, color: "rgba(255,255,255,0.9)", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{title}</p>
+          <p style={{ fontSize: 14, fontWeight: 500, color: "rgba(255,255,255,0.9)", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{topBarTitle}</p>
         </div>
 
         {/* bottom controls wrapper */}

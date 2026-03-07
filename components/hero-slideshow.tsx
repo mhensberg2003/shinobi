@@ -30,7 +30,7 @@ export function HeroSlideshow({ items }: { items: MediaSearchItem[] }) {
   const bg = item.backdropUrl!;
 
   return (
-    <section style={{ position: "relative", height: "clamp(320px, 28vw, 500px)", overflow: "hidden" }}>
+    <section style={{ position: "relative", height: "clamp(400px, 36vw, 620px)", overflow: "hidden" }}>
       {/* backdrop */}
       <div
         style={{
@@ -50,8 +50,8 @@ export function HeroSlideshow({ items }: { items: MediaSearchItem[] }) {
       {/* content */}
       <div
         style={{
-          position: "absolute", bottom: 72, left: 0, right: 0,
-          padding: "0 48px",
+          position: "absolute", bottom: 84, left: 0, right: 0,
+          padding: "0 48px 0 84px",
           opacity: fading ? 0 : 1,
           transition: "opacity 0.35s ease",
         }}
