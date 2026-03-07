@@ -9,9 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "fast-xml-parser": "^5.4.2",
+    "matroska-subtitles": "^3.3.2",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
