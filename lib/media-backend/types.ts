@@ -24,3 +24,22 @@ export type BackendJob = {
   };
   error?: string;
 };
+
+export type BackendWatchSession = {
+  sessionKey: string;
+  magnetLink: string;
+  fileIndex: number;
+  torrentHash?: string;
+  title?: string;
+  posterUrl?: string;
+  episodeNumber?: number;
+  episodeTotal?: number;
+  progressSeconds?: number;
+  durationSeconds?: number;
+  activeInPlayer: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastHeartbeatAt: string;
+  cleanupAfter: string;
+  removedAt?: string;
+};

@@ -1,18 +1,19 @@
 import { notFound } from "next/navigation";
 
 import { WatchPageShell } from "@/components/player/watch-page-shell";
+import { getWatchSession } from "@/lib/media-backend/client";
 import { getMediaBackendConfig } from "@/lib/media-backend/config";
 import { getSeedboxSnapshot, getTorrentDetails } from "@/lib/seedbox/rtorrent";
 
 type PageProps = {
   params: Promise<{ hash: string }>;
-  searchParams: Promise<{ file?: string; poster?: string; title?: string; ep?: string; eps?: string }>;
+  searchParams: Promise<{ file?: string; poster?: string; title?: string; ep?: string; eps?: string; session?: string }>;
 };
 
 export const dynamic = "force-dynamic";
 
 export default async function WatchPage({ params, searchParams }: PageProps) {
-  const [{ hash }, { file, poster, title, ep, eps }] = await Promise.all([params, searchParams]);
+  const [{ hash }, { file, poster, title, ep, eps, session }] = await Promise.all([params, searchParams]);
   const snapshot = await getSeedboxSnapshot();
 
   if (!snapshot.torrents.some((t) => t.hash === hash)) notFound();
@@ -27,6 +28,8 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
 
   const prioritized = torrent.files.find((f) => f.index === selectedFile.index) ?? selectedFile;
   const mediaBackendConfigured = Boolean(getMediaBackendConfig());
+  const watchSession =
+    session && mediaBackendConfigured ? await getWatchSession(session).catch(() => null) : null;
 
   const subtitleTracks = torrent.files
     .filter((f) => f.isSubtitle && f.streamUrl)
@@ -47,12 +50,16 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
 
   return (
     <WatchPageShell
-      storageKey={`shinobi:watch:${torrent.hash}:${prioritized.index}`}
+      storageKey={session ? `shinobi:watch-session:${session}` : `shinobi:watch:${torrent.hash}:${prioritized.index}`}
+      sessionKey={session}
       title={title ?? prioritized.path.split("/").at(-1) ?? prioritized.path}
       streamUrl={prioritized.streamUrl}
       posterUrl={poster}
       episodeNumber={ep ? Number(ep) : undefined}
       episodeTotal={eps ? Number(eps) : undefined}
+      magnetLink={watchSession?.magnetLink}
+      torrentHash={torrent.hash}
+      fileIndex={prioritized.index}
       subtitles={subtitleTracks}
       demuxRequest={
         mediaBackendConfigured

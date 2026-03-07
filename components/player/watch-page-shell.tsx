@@ -23,11 +23,15 @@ type InspectableStream = {
 
 type WatchPageShellProps = {
   storageKey: string;
+  sessionKey?: string;
   title: string;
   streamUrl: string;
   posterUrl?: string;
   episodeNumber?: number;
   episodeTotal?: number;
+  magnetLink?: string;
+  torrentHash: string;
+  fileIndex: number;
   subtitles: SubtitleTrack[];
   demuxRequest?: {
     sourceUrl: string;
@@ -90,11 +94,15 @@ function streamStatus(
 
 export function WatchPageShell({
   storageKey,
+  sessionKey,
   title,
   streamUrl,
   posterUrl,
   episodeNumber,
   episodeTotal,
+  magnetLink,
+  torrentHash,
+  fileIndex,
   subtitles,
   demuxRequest,
 }: WatchPageShellProps) {
@@ -368,11 +376,15 @@ export function WatchPageShell({
     <>
       <WatchPlayer
         storageKey={storageKey}
+        sessionKey={sessionKey}
         title={title}
         streamUrl={streamUrl}
         posterUrl={posterUrl}
         episodeNumber={episodeNumber}
         episodeTotal={episodeTotal}
+        magnetLink={magnetLink}
+        torrentHash={torrentHash}
+        fileIndex={fileIndex}
         subtitles={[...subtitles, ...backendSubtitles]}
         backendSubtitleOptions={backendSubtitleOptions}
         backendAudioOptions={backendAudioOptions}

@@ -13,6 +13,7 @@ type Item = {
   posterUrl?: string;
   episodeNumber?: number;
   episodeTotal?: number;
+  sessionKey?: string;
 };
 
 export function ContinueWatchingRow() {
@@ -21,7 +22,7 @@ export function ContinueWatchingRow() {
     const collected: Item[] = [];
 
     for (const [key, value] of Object.entries(window.localStorage)) {
-      if (!key.startsWith("shinobi:watch:")) continue;
+      if (!key.startsWith("shinobi:watch:") && !key.startsWith("shinobi:watch-session:")) continue;
 
       try {
         const parsed = JSON.parse(value) as {
@@ -31,10 +32,14 @@ export function ContinueWatchingRow() {
           posterUrl?: string;
           episodeNumber?: number;
           episodeTotal?: number;
+          sessionKey?: string;
         };
-        const [, , hash, fileIndex] = key.split(":");
+        const parts = key.split(":");
+        const isSessionKey = key.startsWith("shinobi:watch-session:");
+        const hash = isSessionKey ? "" : parts[2];
+        const fileIndex = isSessionKey ? "" : parts[3];
 
-        if (!hash || !fileIndex || !parsed.currentTime) continue;
+        if ((!parsed.sessionKey && (!hash || !fileIndex)) || !parsed.currentTime) continue;
 
         collected.push({
           key,
@@ -46,6 +51,7 @@ export function ContinueWatchingRow() {
           posterUrl: parsed.posterUrl,
           episodeNumber: parsed.episodeNumber,
           episodeTotal: parsed.episodeTotal,
+          sessionKey: parsed.sessionKey,
         });
       } catch {}
     }
@@ -62,10 +68,13 @@ export function ContinueWatchingRow() {
       <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4, scrollbarWidth: "none" }}>
         {items.map((item) => {
           const pct = item.duration > 0 ? Math.min(100, (item.currentTime / item.duration) * 100) : 0;
+          const href = item.sessionKey
+            ? `/watch/resume/${encodeURIComponent(item.sessionKey)}`
+            : `/watch/${item.hash}?file=${item.fileIndex}`;
           return (
             <Link
               key={item.key}
-              href={`/watch/${item.hash}?file=${item.fileIndex}`}
+              href={href}
               className="cw-card"
               style={{ display: "block", width: 260, minWidth: 260, flexShrink: 0 }}
             >

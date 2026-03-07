@@ -59,6 +59,7 @@ export function PlayIntake({
 
       const params = new URLSearchParams({
         hash: payload.addedHash,
+        magnet: trimmed,
       });
 
       if (kind) {

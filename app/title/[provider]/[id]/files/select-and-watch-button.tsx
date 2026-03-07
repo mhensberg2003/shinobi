@@ -6,9 +6,19 @@ import { startTransition, useState } from "react";
 export function SelectAndWatchButton({
   hash,
   fileIndex,
+  magnetLink,
+  title,
+  posterUrl,
+  episodeNumber,
+  episodeTotal,
 }: {
   hash: string;
   fileIndex: number;
+  magnetLink: string;
+  title: string;
+  posterUrl?: string;
+  episodeNumber?: number;
+  episodeTotal?: number;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -19,6 +29,7 @@ export function SelectAndWatchButton({
     setError(null);
 
     try {
+      const sessionKey = crypto.randomUUID();
       const response = await fetch("/api/seedbox/select-file", {
         method: "POST",
         headers: {
@@ -39,8 +50,43 @@ export function SelectAndWatchButton({
         throw new Error(payload.error ?? "Failed to select file.");
       }
 
+      await fetch("/api/media-backend/watch-sessions/heartbeat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionKey,
+          magnetLink,
+          fileIndex,
+          torrentHash: hash,
+          title,
+          posterUrl,
+          episodeNumber,
+          episodeTotal,
+          progressSeconds: 0,
+          durationSeconds: 0,
+        }),
+      });
+
       startTransition(() => {
-        router.push(`/watch/${hash}?file=${fileIndex}`);
+        const params = new URLSearchParams({
+          file: String(fileIndex),
+          session: sessionKey,
+          title,
+        });
+
+        if (posterUrl) {
+          params.set("poster", posterUrl);
+        }
+        if (episodeNumber != null) {
+          params.set("ep", String(episodeNumber));
+        }
+        if (episodeTotal != null) {
+          params.set("eps", String(episodeTotal));
+        }
+
+        router.push(`/watch/${hash}?${params.toString()}`);
       });
     } catch (selectionError) {
       setError(selectionError instanceof Error ? selectionError.message : "Failed to select file.");

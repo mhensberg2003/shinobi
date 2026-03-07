@@ -17,11 +17,15 @@ type BackendTrackOption = {
 
 type WatchPlayerProps = {
   storageKey: string;
+  sessionKey?: string;
   title: string;
   streamUrl: string;
   posterUrl?: string;
   episodeNumber?: number;
   episodeTotal?: number;
+  magnetLink?: string;
+  torrentHash: string;
+  fileIndex: number;
   subtitles: SubtitleTrack[];
   backendSubtitleOptions?: BackendTrackOption[];
   backendAudioOptions?: BackendTrackOption[];
@@ -35,7 +39,7 @@ type WatchPlayerProps = {
   audioLoadingLabel?: string | null;
 };
 
-type StoredProgress = { title: string; currentTime: number; duration: number; updatedAt: string; posterUrl?: string; episodeNumber?: number; episodeTotal?: number };
+type StoredProgress = { title: string; currentTime: number; duration: number; updatedAt: string; posterUrl?: string; episodeNumber?: number; episodeTotal?: number; sessionKey?: string };
 
 type HTMLVideoElementWithAudioTracks = HTMLVideoElement & {
   audioTracks?: ArrayLike<{ enabled: boolean; label?: string; language?: string }> & EventTarget;
@@ -104,6 +108,7 @@ function writeProgress(key: string, p: StoredProgress) {
       posterUrl: p.posterUrl || existing?.posterUrl,
       episodeNumber: p.episodeNumber ?? existing?.episodeNumber,
       episodeTotal: p.episodeTotal ?? existing?.episodeTotal,
+      sessionKey: p.sessionKey ?? existing?.sessionKey,
     };
 
     localStorage.setItem(key, JSON.stringify(next));
@@ -160,11 +165,15 @@ function IconFullscreen({ isFs, size = 20 }: { isFs: boolean; size?: number }) {
 
 export function WatchPlayer({
   storageKey,
+  sessionKey,
   title,
   streamUrl,
   posterUrl,
   episodeNumber,
   episodeTotal,
+  magnetLink,
+  torrentHash,
+  fileIndex,
   subtitles,
   backendSubtitleOptions = [],
   backendAudioOptions = [],
@@ -182,9 +191,12 @@ export function WatchPlayer({
   const playerRef = useRef<HTMLVideoElement | null>(null);
   const externalAudioRef = useRef<HTMLAudioElement | null>(null);
   const hideTimer = useRef<number | null>(null);
+  const restorePendingRef = useRef(false);
 
   const [saved] = useState(() => readProgress(storageKey));
+  const hasResumePoint = Boolean(saved?.currentTime && saved.currentTime > 5);
   const [restored, setRestored] = useState(false);
+  const [resumeReady, setResumeReady] = useState(!hasResumePoint);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -206,6 +218,82 @@ export function WatchPlayer({
     effectiveEpisodeNumber != null
       ? `${effectiveTitle} • Episode ${effectiveEpisodeNumber}${effectiveEpisodeTotal != null ? `/${effectiveEpisodeTotal}` : ""}`
       : effectiveTitle;
+
+  useEffect(() => {
+    if (!sessionKey || !magnetLink) {
+      return;
+    }
+
+    async function sendHeartbeat(progressSeconds: number, durationSeconds: number) {
+      await fetch("/api/media-backend/watch-sessions/heartbeat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionKey,
+          magnetLink,
+          fileIndex,
+          torrentHash,
+          title: effectiveTitle,
+          posterUrl,
+          episodeNumber: effectiveEpisodeNumber,
+          episodeTotal: effectiveEpisodeTotal,
+          progressSeconds,
+          durationSeconds,
+        }),
+      }).catch(() => {});
+    }
+
+    void sendHeartbeat(currentTime, duration);
+
+    const interval = window.setInterval(() => {
+      const video = playerRef.current;
+      if (!video) return;
+
+      void sendHeartbeat(
+        video.currentTime,
+        Number.isFinite(video.duration) ? video.duration : duration,
+      );
+    }, 30_000);
+
+    function deactivate() {
+      const payload = JSON.stringify({
+        sessionKey,
+        magnetLink,
+        fileIndex,
+        torrentHash,
+        title: effectiveTitle,
+        posterUrl,
+        episodeNumber: effectiveEpisodeNumber,
+        episodeTotal: effectiveEpisodeTotal,
+        progressSeconds: playerRef.current?.currentTime ?? currentTime,
+        durationSeconds: Number.isFinite(playerRef.current?.duration) ? playerRef.current?.duration : duration,
+      });
+
+      navigator.sendBeacon(
+        "/api/media-backend/watch-sessions/deactivate",
+        new Blob([payload], { type: "application/json" }),
+      );
+    }
+
+    window.addEventListener("pagehide", deactivate);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("pagehide", deactivate);
+      deactivate();
+    };
+  }, [
+    sessionKey,
+    magnetLink,
+    fileIndex,
+    torrentHash,
+    effectiveTitle,
+    posterUrl,
+    effectiveEpisodeNumber,
+    effectiveEpisodeTotal,
+  ]);
 
   useEffect(() => {
     const p = playerRef.current;
@@ -282,26 +370,38 @@ export function WatchPlayer({
       setBuffered(b.length ? b.end(b.length - 1) : 0);
     }
 
-    function onMeta() {
-      logSubtitleDebug("video-loaded-metadata", {
-        streamUrl,
-        subtitlePropCount: subtitles.length,
-      });
-      sync();
-      if (!restored && saved?.currentTime && saved.currentTime > 5) {
-        const safe = Number.isFinite(video.duration) && video.duration > 0
-          ? Math.min(saved.currentTime, video.duration - 3)
-          : saved.currentTime;
-        video.currentTime = safe;
-        setCurrentTime(safe);
+    function finishRestore() {
+      if (!restorePendingRef.current && restored) {
+        return;
       }
+
+      restorePendingRef.current = false;
       const initialSubtitleIndex = Array.from(video.textTracks).findIndex((track) => track.mode === "showing");
       if (initialSubtitleIndex >= 0) {
         setSelectedSub(initialSubtitleIndex);
       }
       syncTextTracks();
       syncAudioTracks();
+      setResumeReady(true);
       setRestored(true);
+    }
+
+    function onMeta() {
+      logSubtitleDebug("video-loaded-metadata", {
+        streamUrl,
+        subtitlePropCount: subtitles.length,
+      });
+      sync();
+      if (!restored && hasResumePoint && saved?.currentTime) {
+        const safe = Number.isFinite(video.duration) && video.duration > 0
+          ? Math.min(saved.currentTime, video.duration - 3)
+          : saved.currentTime;
+        restorePendingRef.current = true;
+        video.currentTime = safe;
+        setCurrentTime(safe);
+        return;
+      }
+      finishRestore();
     }
 
     function onPlay() {
@@ -318,14 +418,14 @@ export function WatchPlayer({
       externalAudio?.pause();
       if (!p) return;
       setPlaying(false);
-      if (p.currentTime > 0) writeProgress(storageKey, { title: effectiveTitle, currentTime: p.currentTime, duration: Number.isFinite(p.duration) ? p.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal });
+      if (p.currentTime > 0) writeProgress(storageKey, { title: effectiveTitle, currentTime: p.currentTime, duration: Number.isFinite(p.duration) ? p.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal, sessionKey });
       setShowControls(true);
     }
     function onEnded() {
       const externalAudio = externalAudioRef.current;
       externalAudio?.pause();
       externalAudio?.removeAttribute("src");
-      writeProgress(storageKey, { title: effectiveTitle, currentTime: 0, duration: 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal });
+      writeProgress(storageKey, { title: effectiveTitle, currentTime: 0, duration: 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal, sessionKey });
       setPlaying(false);
       setShowControls(true);
     }
@@ -352,6 +452,10 @@ export function WatchPlayer({
     }
     function onSeeked() {
       const externalAudio = externalAudioRef.current;
+      if (restorePendingRef.current) {
+        sync();
+        finishRestore();
+      }
       if (!externalAudio || selectedExternalAudioId === null) {
         return;
       }
@@ -388,7 +492,7 @@ export function WatchPlayer({
 
     const interval = window.setInterval(() => {
       if (!video.paused && video.currentTime > 0)
-        writeProgress(storageKey, { title: effectiveTitle, currentTime: video.currentTime, duration: Number.isFinite(video.duration) ? video.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal });
+        writeProgress(storageKey, { title: effectiveTitle, currentTime: video.currentTime, duration: Number.isFinite(video.duration) ? video.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal, sessionKey });
     }, 5000);
 
     return () => {
@@ -409,7 +513,7 @@ export function WatchPlayer({
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("addtrack", onAudioTrackListChange);
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("removetrack", onAudioTrackListChange);
     };
-  }, [restored, saved, storageKey, subtitles, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId]);
+  }, [restored, saved, storageKey, subtitles, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId, sessionKey]);
 
   useEffect(() => {
     const video = playerRef.current;
@@ -469,6 +573,7 @@ export function WatchPlayer({
   function reveal() { setShowControls(true); scheduleHide(); }
 
   function togglePlay() {
+    if (!resumeReady) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -486,6 +591,7 @@ export function WatchPlayer({
   }
 
   function seek(t: number) {
+    if (!resumeReady) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -497,12 +603,14 @@ export function WatchPlayer({
   }
 
   function seekBy(d: number) {
+    if (!resumeReady) return;
     const p = playerRef.current;
     if (!p) return;
     seek(Math.max(0, Math.min(p.currentTime + d, duration || p.duration || 0)));
   }
 
   function setVol(v: number) {
+    if (!resumeReady) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -522,6 +630,7 @@ export function WatchPlayer({
   }
 
   function toggleMute() {
+    if (!resumeReady) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -540,6 +649,7 @@ export function WatchPlayer({
   }
 
   async function toggleFs() {
+    if (!resumeReady) return;
     const c = containerRef.current;
     if (!c) return;
     if (document.fullscreenElement) await document.exitFullscreen();
@@ -547,6 +657,7 @@ export function WatchPlayer({
   }
 
   function selectSub(idx: number | null) {
+    if (!resumeReady) return;
     const p = playerRef.current;
     if (!p) return;
     Array.from(p.textTracks).forEach((track, index) => {
@@ -568,6 +679,7 @@ export function WatchPlayer({
   }
 
   function selectAudio(id: number) {
+    if (!resumeReady) return;
     const p = playerRef.current as HTMLVideoElementWithAudioTracks | null;
     const tracks = p?.audioTracks;
     if (!tracks) return;
@@ -588,6 +700,7 @@ export function WatchPlayer({
   }
 
   function selectExternalAudio(id: number) {
+    if (!resumeReady) return;
     const video = playerRef.current;
     const audio = externalAudioRef.current;
     const selectedTrack = externalAudioTracks.find((track) => track.id === id);
@@ -625,11 +738,12 @@ export function WatchPlayer({
     >
       <video
         ref={playerRef}
-        preload="metadata"
+        preload="auto"
         poster={posterUrl}
-        style={{ width: "100%", height: "100%", display: "block", objectFit: "contain", background: "#000" }}
+        style={{ width: "100%", height: "100%", display: "block", objectFit: "contain", background: "#000", visibility: resumeReady ? "visible" : "hidden" }}
         src={streamUrl}
         onClick={togglePlay}
+        controls={false}
       >
         {subtitles.map((s) => (
           <track
@@ -644,13 +758,19 @@ export function WatchPlayer({
       </video>
       <audio ref={externalAudioRef} preload="metadata" style={{ display: "none" }} />
 
+      {!resumeReady ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/18 border-t-white" />
+        </div>
+      ) : null}
+
       {/* gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
 
       {/* controls */}
       <div
         className="absolute inset-0 flex flex-col justify-between transition-opacity duration-200"
-        style={{ opacity: showControls ? 1 : 0, pointerEvents: showControls ? "auto" : "none" }}
+        style={{ opacity: showControls && resumeReady ? 1 : 0, pointerEvents: showControls && resumeReady ? "auto" : "none" }}
       >
         {/* top bar: back + title */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px" }}>
@@ -948,12 +1068,17 @@ export function WatchPlayer({
 
       {/* center play/pause on click */}
       <div
-        className="absolute inset-0 flex items-center justify-center pointer-events-none"
-        style={{ opacity: showControls && !playing ? 1 : 0, transition: "opacity 0.2s" }}
+        className="absolute inset-0 flex items-center justify-center"
+        style={{ opacity: resumeReady && showControls && !playing ? 1 : 0, transition: "opacity 0.2s", pointerEvents: resumeReady && showControls && !playing ? "auto" : "none" }}
       >
-        <div className="rounded-full bg-black/50 p-5">
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label="Play"
+          className="rounded-full bg-black/50 p-5 text-white"
+        >
           <IconPlay size={36} />
-        </div>
+        </button>
       </div>
 
       {subtitleLoadingLabel ? (

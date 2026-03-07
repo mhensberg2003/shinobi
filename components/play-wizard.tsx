@@ -94,12 +94,32 @@ export function PlayWizard({ episodeHint, posterUrl, episodeNumber, episodeTotal
     if (!hash || busy) return;
     setBusy(true);
     try {
+      const sessionKey = crypto.randomUUID();
+
       await fetch("/api/seedbox/select-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ hash, fileIndex }),
       });
-      const url = `/watch/${hash}?file=${fileIndex}${posterUrl ? `&poster=${encodeURIComponent(posterUrl)}` : ""}${episodeHint ? `&title=${encodeURIComponent(episodeHint)}` : ""}${episodeNumber != null ? `&ep=${episodeNumber}` : ""}${episodeTotal != null ? `&eps=${episodeTotal}` : ""}`;
+
+      await fetch("/api/media-backend/watch-sessions/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionKey,
+          magnetLink: magnet.trim(),
+          fileIndex,
+          torrentHash: hash,
+          title: episodeHint,
+          posterUrl,
+          episodeNumber,
+          episodeTotal,
+          progressSeconds: 0,
+          durationSeconds: 0,
+        }),
+      });
+
+      const url = `/watch/${hash}?file=${fileIndex}&session=${encodeURIComponent(sessionKey)}${posterUrl ? `&poster=${encodeURIComponent(posterUrl)}` : ""}${episodeHint ? `&title=${encodeURIComponent(episodeHint)}` : ""}${episodeNumber != null ? `&ep=${episodeNumber}` : ""}${episodeTotal != null ? `&eps=${episodeTotal}` : ""}`;
       router.push(url);
     } catch {
       setBusy(false);

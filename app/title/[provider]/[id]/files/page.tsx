@@ -12,6 +12,7 @@ type PageProps = {
   }>;
   searchParams: Promise<{
     hash?: string;
+    magnet?: string;
     kind?: "anime" | "movie" | "show";
     episode?: string;
   }>;
@@ -33,9 +34,9 @@ function formatBytes(bytes: number): string {
 export const dynamic = "force-dynamic";
 
 export default async function TitleFilesPage({ params, searchParams }: PageProps) {
-  const [{ provider, id }, { hash, kind, episode }] = await Promise.all([params, searchParams]);
+  const [{ provider, id }, { hash, magnet, kind, episode }] = await Promise.all([params, searchParams]);
 
-  if (!hash) {
+  if (!hash || !magnet) {
     notFound();
   }
 
@@ -110,7 +111,15 @@ export default async function TitleFilesPage({ params, searchParams }: PageProps
                     </p>
                   </div>
 
-                  <SelectAndWatchButton hash={hash} fileIndex={file.index} />
+                  <SelectAndWatchButton
+                    hash={hash}
+                    fileIndex={file.index}
+                    magnetLink={magnet}
+                    title={episode ? `${detail.title} ${episode}` : detail.title}
+                    posterUrl={detail.posterUrl}
+                    episodeNumber={undefined}
+                    episodeTotal={undefined}
+                  />
                 </div>
               </article>
             ))}
