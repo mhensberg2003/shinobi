@@ -211,6 +211,8 @@ export function WatchPlayer({
   const [selectedSub, setSelectedSub] = useState<number | null>(null);
   const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
+  const [trackLoadingVisible, setTrackLoadingVisible] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(4);
   const effectiveTitle = resolvePreferredTitle(title, saved?.title);
   const effectiveEpisodeNumber = episodeNumber ?? saved?.episodeNumber;
   const effectiveEpisodeTotal = episodeTotal ?? saved?.episodeTotal;
@@ -294,6 +296,43 @@ export function WatchPlayer({
     effectiveEpisodeNumber,
     effectiveEpisodeTotal,
   ]);
+
+  const trackLoading = Boolean(subtitleLoadingLabel || audioLoadingLabel);
+
+  useEffect(() => {
+    let interval: number | null = null;
+    let completeTimer: number | null = null;
+    const startedAt = Date.now();
+
+    if (trackLoading) {
+      setTrackLoadingVisible(true);
+      setLoadingProgress(4);
+
+      interval = window.setInterval(() => {
+        const elapsed = Date.now() - startedAt;
+        const nextProgress =
+          elapsed <= 20_000
+            ? 4 + (elapsed / 20_000) * 84
+            : 88 + (1 - Math.exp(-(elapsed - 20_000) / 9_000)) * 10;
+
+        setLoadingProgress((current) => Math.max(current, Math.min(98, nextProgress)));
+      }, 120);
+    } else if (trackLoadingVisible) {
+      setLoadingProgress(100);
+      completeTimer = window.setTimeout(() => {
+        setTrackLoadingVisible(false);
+      }, 220);
+    }
+
+    return () => {
+      if (interval) {
+        window.clearInterval(interval);
+      }
+      if (completeTimer) {
+        window.clearTimeout(completeTimer);
+      }
+    };
+  }, [trackLoading, trackLoadingVisible]);
 
   useEffect(() => {
     const p = playerRef.current;
@@ -573,7 +612,7 @@ export function WatchPlayer({
   function reveal() { setShowControls(true); scheduleHide(); }
 
   function togglePlay() {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -591,7 +630,7 @@ export function WatchPlayer({
   }
 
   function seek(t: number) {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -603,14 +642,14 @@ export function WatchPlayer({
   }
 
   function seekBy(d: number) {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     if (!p) return;
     seek(Math.max(0, Math.min(p.currentTime + d, duration || p.duration || 0)));
   }
 
   function setVol(v: number) {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -630,7 +669,7 @@ export function WatchPlayer({
   }
 
   function toggleMute() {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
@@ -649,7 +688,7 @@ export function WatchPlayer({
   }
 
   async function toggleFs() {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const c = containerRef.current;
     if (!c) return;
     if (document.fullscreenElement) await document.exitFullscreen();
@@ -657,7 +696,7 @@ export function WatchPlayer({
   }
 
   function selectSub(idx: number | null) {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     if (!p) return;
     Array.from(p.textTracks).forEach((track, index) => {
@@ -679,7 +718,7 @@ export function WatchPlayer({
   }
 
   function selectAudio(id: number) {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const p = playerRef.current as HTMLVideoElementWithAudioTracks | null;
     const tracks = p?.audioTracks;
     if (!tracks) return;
@@ -699,8 +738,29 @@ export function WatchPlayer({
     setAudioMenu(false);
   }
 
+  function selectOriginalAudio() {
+    if (!resumeReady || trackLoading) return;
+
+    const video = playerRef.current as HTMLVideoElementWithAudioTracks | null;
+    const audio = externalAudioRef.current;
+
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+
+    if (video) {
+      video.muted = muted;
+      video.volume = volume;
+    }
+
+    onSelectExternalAudio?.(null);
+    setAudioMenu(false);
+  }
+
   function selectExternalAudio(id: number) {
-    if (!resumeReady) return;
+    if (!resumeReady || trackLoading) return;
     const video = playerRef.current;
     const audio = externalAudioRef.current;
     const selectedTrack = externalAudioTracks.find((track) => track.id === id);
@@ -734,7 +794,7 @@ export function WatchPlayer({
       ref={containerRef}
       style={{ position: "fixed", inset: 0, zIndex: 100, background: "#000", overflow: "hidden" }}
       onMouseMove={reveal}
-      onMouseLeave={() => { if (playing) setShowControls(false); }}
+      onMouseLeave={() => { if (playing && !trackLoadingVisible) setShowControls(false); }}
     >
       <video
         ref={playerRef}
@@ -770,7 +830,12 @@ export function WatchPlayer({
       {/* controls */}
       <div
         className="absolute inset-0 flex flex-col justify-between transition-opacity duration-200"
-        style={{ opacity: showControls && resumeReady ? 1 : 0, pointerEvents: showControls && resumeReady ? "auto" : "none" }}
+        style={{ opacity: showControls && resumeReady && !trackLoadingVisible ? 1 : 0, pointerEvents: showControls && resumeReady && !trackLoadingVisible ? "auto" : "none" }}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) {
+            togglePlay();
+          }
+        }}
       >
         {/* top bar: back + title */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px" }}>
@@ -969,8 +1034,16 @@ export function WatchPlayer({
             </button>
             {audioMenu && (
               <div className="absolute bottom-10 right-0 z-20 min-w-[220px] rounded-lg border border-white/10 bg-[#1a1a1a] py-1 shadow-xl">
+                <button
+                  type="button"
+                  onClick={selectOriginalAudio}
+                  className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === null ? "text-white" : "text-[var(--muted)]"}`}
+                >
+                  Original audio
+                </button>
                 {audioTracks.length > 0 ? (
                   <>
+                    <div className="mx-3 my-2 h-px bg-white/10" />
                     {audioTracks.map(t => (
                       <button
                         key={t.id}
@@ -1068,35 +1141,29 @@ export function WatchPlayer({
 
       {/* center play/pause on click */}
       <div
-        className="absolute inset-0 flex items-center justify-center"
-        style={{ opacity: resumeReady && showControls && !playing ? 1 : 0, transition: "opacity 0.2s", pointerEvents: resumeReady && showControls && !playing ? "auto" : "none" }}
+        className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        style={{ opacity: resumeReady && showControls && !playing && !trackLoading ? 1 : 0, transition: "opacity 0.2s" }}
       >
-        <button
-          type="button"
-          onClick={togglePlay}
-          aria-label="Play"
-          className="rounded-full bg-black/50 p-5 text-white"
-        >
+        <div className="rounded-full bg-black/50 p-5 text-white">
           <IconPlay size={36} />
-        </button>
+        </div>
       </div>
 
-      {subtitleLoadingLabel ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="rounded-[28px] border border-white/12 bg-black/58 px-6 py-5 text-center shadow-2xl backdrop-blur-xl">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/18 border-t-white" />
-            <p className="mt-3 text-[11px] uppercase tracking-[0.22em] text-white/45">Loading subtitles</p>
-            <p className="mt-1 max-w-[18rem] text-sm text-white/88">{subtitleLoadingLabel}</p>
-          </div>
+      {!resumeReady ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/18 border-t-white" />
         </div>
       ) : null}
 
-      {audioLoadingLabel ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="rounded-[28px] border border-white/12 bg-black/58 px-6 py-5 text-center shadow-2xl backdrop-blur-xl">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/18 border-t-white" />
-            <p className="mt-3 text-[11px] uppercase tracking-[0.22em] text-white/45">Loading audio</p>
-            <p className="mt-1 max-w-[18rem] text-sm text-white/88">{audioLoadingLabel}</p>
+      {trackLoadingVisible ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
+          <div className="w-[min(420px,calc(100vw-56px))]">
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/12">
+              <div
+                style={{ width: `${loadingProgress}%`, transition: "width 0.18s linear" }}
+                className="h-full rounded-full bg-white"
+              />
+            </div>
           </div>
         </div>
       ) : null}
