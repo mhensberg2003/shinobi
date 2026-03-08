@@ -53,7 +53,7 @@ export async function inspectMediaSource(input: {
 
   return {
     streams: payload.streams,
-    cachedArtifacts: payload.cachedArtifacts ?? { subtitles: {}, audio: {} },
+    cachedArtifacts: payload.cachedArtifacts ?? { subtitles: {}, audio: {}, fonts: [] },
     playback: payload.playback,
   };
 }

@@ -1,11 +1,7 @@
 import { build } from "esbuild";
-import { existsSync } from "fs";
+import { existsSync, cpSync } from "fs";
 
 const bundles = [
-  {
-    entry: "node_modules/jassub/dist/jassub.js",
-    out: "public/jassub/jassub.bundle.js",
-  },
   {
     entry: "node_modules/libpgs/dist/libpgs.js",
     out: "public/libpgs.bundle.js",
@@ -25,4 +21,12 @@ for (const { entry, out } of bundles) {
     outfile: out,
     platform: "browser",
   });
+}
+
+// Copy JASSUB static assets so they're served directly (never bundled by Next.js)
+if (!existsSync("public/jassub/jassub.bundle.js")) {
+  console.log("[bundle-externals] copying jassub static assets → public/jassub/");
+  cpSync("node_modules/jassub/dist/", "public/jassub/", { recursive: true });
+} else {
+  console.log("[bundle-externals] skip public/jassub/ (exists)");
 }

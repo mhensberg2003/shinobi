@@ -52,6 +52,7 @@ export async function POST(request: Request) {
             toArtifactProxyUrl(url),
           ]),
         ),
+        fonts: result.cachedArtifacts.fonts.map((url) => toArtifactProxyUrl(url)),
       },
       playback: result.playback,
     });

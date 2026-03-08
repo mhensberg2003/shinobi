@@ -19,6 +19,7 @@ export type BackendPlaybackAssessment = {
 export type BackendCachedArtifacts = {
   subtitles: Record<number, string>;
   audio: Record<number, string>;
+  fonts: string[];
 };
 
 export type BackendJob = {
@@ -34,6 +35,7 @@ export type BackendJob = {
   output?: {
     subtitles: string[];
     audio: string[];
+    fonts?: string[];
     inspectedStreams: BackendInspectedStream[];
   };
   error?: string;
@@ -44,7 +46,7 @@ export type BackendWatchSession = {
   magnetLink: string;
   fileIndex: number;
   torrentHash?: string;
-  sourceProvider?: "seedbox" | "realdebrid";
+  sourceProvider?: "realdebrid";
   sourceId?: string;
   sourceLink?: string;
   sourceUrl?: string;

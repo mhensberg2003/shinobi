@@ -2,12 +2,22 @@
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-type JassubInstance = { destroy(): Promise<void> };
-type JassubCtor = new (opts: Record<string, unknown>) => JassubInstance;
+type AssRendererInstance = {
+  destroy(): void;
+};
+type JassubCtor = new (opts: {
+  video: HTMLVideoElement;
+  canvas: HTMLCanvasElement;
+  subContent: string;
+  workerUrl: string;
+  wasmUrl: string;
+  modernWasmUrl?: string;
+  resampling?: "video_width" | "video_height" | "script_width" | "script_height";
+}) => AssRendererInstance;
 type PgsRendererInstance = { dispose(): void; renderAtTimestamp(ts: number): void };
 type PgsRendererCtor = new (opts: Record<string, unknown>) => PgsRendererInstance;
 
-// Opaque to both TypeScript's module resolver and webpack — loads from /public at runtime
+// Opaque to TypeScript's module resolver and runtime-bundled separately.
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const loadUrl = new Function("url", "return import(url)") as <T>(url: string) => Promise<T>;
 
@@ -54,6 +64,7 @@ type WatchPlayerProps = {
   onSelectExternalAudio?: (id: number | null) => void;
   audioLoadingLabel?: string | null;
   audioLoadingMode?: "extract" | "transcode" | null;
+  restrictForwardSeeksToBuffered?: boolean;
 };
 
 type StoredProgress = {
@@ -217,6 +228,117 @@ function sendClientDebug(scope: string, message: string, details: Record<string,
   } catch {}
 }
 
+async function logAssRuntimePreflight(
+  workerUrl: string,
+  wasmUrl: string,
+  modernWasmUrl: string,
+): Promise<void> {
+  const features = {
+    crossOriginIsolated: globalThis.crossOriginIsolated ?? false,
+    hasSharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
+    hasOffscreenCanvas: typeof OffscreenCanvas !== "undefined",
+    hasTransferControlToOffscreen:
+      typeof HTMLCanvasElement !== "undefined" &&
+      "transferControlToOffscreen" in HTMLCanvasElement.prototype,
+    hasRequestVideoFrameCallback:
+      typeof HTMLVideoElement !== "undefined" &&
+      "requestVideoFrameCallback" in HTMLVideoElement.prototype,
+  };
+
+  console.info("[shinobi:player] ass runtime features", features);
+
+  const urls = [
+    { kind: "worker", url: workerUrl },
+    { kind: "wasm", url: wasmUrl },
+    { kind: "modernWasm", url: modernWasmUrl },
+  ];
+
+  await Promise.all(
+    urls.map(async ({ kind, url }) => {
+      try {
+        const response = await fetch(url, { cache: "no-store" });
+        console.info("[shinobi:player] ass runtime preflight", {
+          kind,
+          url,
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get("content-type"),
+        });
+      } catch (error) {
+        console.warn("[shinobi:player] ass runtime preflight failed", {
+          kind,
+          url,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }),
+  );
+}
+
+type AssDialogueSample = {
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+};
+
+function parseAssTimestamp(value: string): number | null {
+  const match = value.trim().match(/^(\d+):(\d{2}):(\d{2})[.](\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, hours, minutes, seconds, centiseconds] = match;
+  return (
+    Number(hours) * 3600 +
+    Number(minutes) * 60 +
+    Number(seconds) +
+    Number(centiseconds) / 100
+  );
+}
+
+function getAssDialogueSamples(subtitleContent: string, currentTime: number): {
+  active: AssDialogueSample[];
+  nearby: AssDialogueSample[];
+} {
+  const dialogues: AssDialogueSample[] = [];
+
+  for (const line of subtitleContent.split(/\r?\n/)) {
+    if (!line.startsWith("Dialogue:")) {
+      continue;
+    }
+
+    const parts = line.split(",", 10);
+    if (parts.length < 10) {
+      continue;
+    }
+
+    const startSeconds = parseAssTimestamp(parts[1] ?? "");
+    const endSeconds = parseAssTimestamp(parts[2] ?? "");
+    if (startSeconds == null || endSeconds == null) {
+      continue;
+    }
+
+    dialogues.push({
+      startSeconds,
+      endSeconds,
+      text: (parts[9] ?? "").replace(/\\N/g, " ").slice(0, 120),
+    });
+  }
+
+  return {
+    active: dialogues
+      .filter((dialogue) => currentTime >= dialogue.startSeconds && currentTime <= dialogue.endSeconds)
+      .slice(0, 5),
+    nearby: dialogues
+      .filter(
+        (dialogue) =>
+          Math.abs(dialogue.startSeconds - currentTime) <= 10 ||
+          Math.abs(dialogue.endSeconds - currentTime) <= 10,
+      )
+      .slice(0, 5),
+  };
+}
+
 function isKeyboardShortcutTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return true;
@@ -306,19 +428,20 @@ export function WatchPlayer({
   onSelectExternalAudio,
   audioLoadingLabel,
   audioLoadingMode,
+  restrictForwardSeeksToBuffered = true,
 }: WatchPlayerProps) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<HTMLVideoElement | null>(null);
-  const assCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const subtitleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const assContainerRef = useRef<HTMLDivElement | null>(null);
   const externalAudioRef = useRef<HTMLAudioElement | null>(null);
   const hideTimer = useRef<number | null>(null);
   const seekToastTimerRef = useRef<number | null>(null);
   const restorePendingRef = useRef(false);
   const resumeAfterSeekRef = useRef(false);
   const seekingRef = useRef(false);
-  const assRendererRef = useRef<JassubInstance | null>(null);
+  const assRendererRef = useRef<AssRendererInstance | null>(null);
   const pgsRendererRef = useRef<PgsRendererInstance | null>(null);
 
   const [saved] = useState(() => readProgress(storageKey));
@@ -344,6 +467,7 @@ export function WatchPlayer({
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
   const [trackLoadingVisible, setTrackLoadingVisible] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(4);
+
   const effectiveTitle = resolvePreferredTitle(title, saved?.title);
   const effectiveEpisodeNumber = episodeNumber ?? saved?.episodeNumber;
   const effectiveEpisodeTotal = episodeTotal ?? saved?.episodeTotal;
@@ -903,38 +1027,98 @@ export function WatchPlayer({
 
   useEffect(() => {
     const video = playerRef.current;
-    const canvas = assCanvasRef.current;
+    const assContainer = assContainerRef.current;
 
-    void assRendererRef.current?.destroy();
+    assRendererRef.current?.destroy();
     assRendererRef.current = null;
 
-    if (!video || !canvas || !selectedAssSubtitle) {
+    if (assContainer) {
+      assContainer.replaceChildren();
+    }
+
+    if (!video || !assContainer || !selectedAssSubtitle) {
       return;
     }
 
     let cancelled = false;
+    const controller = new AbortController();
+    void Promise.all([
+      loadUrl<{ default: JassubCtor }>("/jassub/jassub.bundle.js"),
+      fetch(selectedAssSubtitle.src, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load ASS subtitle: ${response.status}`);
+        }
 
-    void loadUrl<{ default: JassubCtor }>("/jassub/jassub.bundle.js").then(({ default: Jassub }) => {
-      if (cancelled) {
-        return;
-      }
+        return response.text();
+      }),
+    ])
+      .then(([{ default: JASSUB }, subtitleContent]) => {
+        if (cancelled) {
+          return;
+        }
 
-      assRendererRef.current = new Jassub({
-        video,
-        canvas,
-        subUrl: selectedAssSubtitle.src,
-        workerUrl: "/jassub/jassub-worker.js",
-        wasmUrl: "/jassub/wasm/jassub-worker.wasm",
-        modernWasmUrl: "/jassub/wasm/jassub-worker-modern.wasm",
+        console.info("[shinobi:player] ass subtitle fetched", {
+          subtitle: selectedAssSubtitle.label,
+          src: selectedAssSubtitle.src,
+          length: subtitleContent.length,
+          preview: subtitleContent.slice(0, 120),
+        });
+        console.info("[shinobi:player] ass dialogue timing sample", {
+          subtitle: selectedAssSubtitle.label,
+          currentTime: video.currentTime,
+          ...getAssDialogueSamples(subtitleContent, video.currentTime),
+        });
+
+        const canvas = document.createElement("canvas");
+        canvas.style.position = "absolute";
+        canvas.style.top = "50%";
+        canvas.style.left = "50%";
+        canvas.style.transform = "translate(-50%, -50%)";
+        assContainer.appendChild(canvas);
+        const renderer = new JASSUB({
+          video,
+          canvas,
+          subContent: subtitleContent,
+          workerUrl: "/jassub/worker/worker.bundle.js",
+          wasmUrl: "/jassub/wasm/jassub-worker.wasm",
+          modernWasmUrl: "/jassub/wasm/jassub-worker-modern.wasm",
+          resampling: "script_height",
+        });
+        assRendererRef.current = renderer;
+
+        console.info("[shinobi:player] ass subtitle renderer created", {
+          subtitle: selectedAssSubtitle.label,
+          src: selectedAssSubtitle.src,
+          selectedAssSubtitleId,
+          videoPaused: video.paused,
+          currentTime: video.currentTime,
+          containerChildren: assContainer.childElementCount,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        console.warn("[shinobi:player] ass subtitle init failed", {
+          subtitle: selectedAssSubtitle.label,
+          src: selectedAssSubtitle.src,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
 
     return () => {
       cancelled = true;
-      void assRendererRef.current?.destroy();
+      controller.abort();
+      assRendererRef.current?.destroy();
       assRendererRef.current = null;
+      assContainer.replaceChildren();
     };
-  }, [selectedAssSubtitle]);
+  }, [selectedAssSubtitle, selectedAssSubtitleId]);
+
 
   useEffect(() => {
     const video = playerRef.current;
@@ -1116,7 +1300,9 @@ export function WatchPlayer({
     const targetTime = Math.max(0, Math.min(t, maxTime));
     const bufferedSeekLimit = Math.min(maxTime, getBufferedSeekLimit(p));
     const limitedTime =
-      targetTime > p.currentTime && targetTime > bufferedSeekLimit
+      restrictForwardSeeksToBuffered &&
+      targetTime > p.currentTime &&
+      targetTime > bufferedSeekLimit
         ? Math.max(p.currentTime, bufferedSeekLimit)
         : targetTime;
 
@@ -1255,9 +1441,16 @@ export function WatchPlayer({
     if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     if (!p) return;
+    const selectedTrack = assSubtitleSources.find((track) => track.index === id) ?? null;
     Array.from(p.textTracks).forEach((track) => {
       if (track.kind !== "subtitles" && track.kind !== "captions") return;
       track.mode = "disabled";
+    });
+    console.info("[shinobi:player] ass subtitle selected", {
+      id,
+      label: selectedTrack?.label,
+      src: selectedTrack?.src,
+      currentTime: p.currentTime,
     });
     setSelectedSub(null);
     setSelectedBitmapSubtitleId(null);
@@ -1409,16 +1602,16 @@ export function WatchPlayer({
           />
         ))}
       </video>
-      <canvas
-        ref={assCanvasRef}
+      <div
+        ref={assContainerRef}
         aria-hidden="true"
+        className="shinobi-ass-overlay"
         style={{
           position: "absolute",
           inset: 0,
-          width: "100%",
-          height: "100%",
           pointerEvents: "none",
           zIndex: 8,
+          overflow: "hidden",
           display: selectedAssSubtitleId !== null ? "block" : "none",
         }}
       />
@@ -1876,6 +2069,22 @@ export function WatchPlayer({
           </div>
         </div>
       ) : null}
+
+      <style jsx global>{`
+        .shinobi-ass-overlay,
+        .shinobi-ass-overlay * {
+          font-family: "Trebuchet MS", Trebuchet, Arial, sans-serif !important;
+        }
+
+        .shinobi-ass-overlay span,
+        .shinobi-ass-overlay div {
+          -webkit-text-stroke: 0.45px rgba(0, 0, 0, 0.72) !important;
+          paint-order: stroke fill !important;
+          text-shadow:
+            0 1px 2px rgba(0, 0, 0, 0.72),
+            0 2px 6px rgba(0, 0, 0, 0.38) !important;
+        }
+      `}</style>
     </div>
   );
 }

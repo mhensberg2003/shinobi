@@ -50,7 +50,7 @@ export function ResumeWatchProgress({
         }
 
         const activeSession = payload.resolution.session;
-        if (!activeSession.torrentHash) {
+        if (!activeSession.sourceUrl || !activeSession.torrentHash) {
           window.setTimeout(() => {
             if (!cancelled) {
               void resolveAndRedirect();
@@ -113,7 +113,7 @@ export function ResumeWatchProgress({
         <p style={{ margin: "12px 0 0", color: "rgba(255,255,255,0.72)", lineHeight: 1.5 }}>
           {error
             ? error
-            : "The torrent was found but the selected file is not ready yet. This page will retry automatically."}
+            : "The playback source is still being prepared. This page will retry automatically."}
         </p>
       </div>
     </main>

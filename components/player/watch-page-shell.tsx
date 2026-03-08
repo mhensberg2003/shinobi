@@ -70,6 +70,7 @@ type WatchPageShellProps = {
     torrentHash: string;
     fileIndex: number;
   };
+  restrictForwardSeeksToBuffered?: boolean;
 };
 
 type InspectResponse = {
@@ -78,6 +79,7 @@ type InspectResponse = {
   cachedArtifacts?: {
     subtitles: Record<number, string>;
     audio: Record<number, string>;
+    fonts?: string[];
   };
   error?: string;
 };
@@ -172,6 +174,7 @@ export function WatchPageShell({
   fileIndex,
   subtitles,
   demuxRequest,
+  restrictForwardSeeksToBuffered = true,
 }: WatchPageShellProps) {
   const [availableStreams, setAvailableStreams] = useState<InspectableStream[]>([]);
   const [backendSubtitles, setBackendSubtitles] = useState<SubtitleTrack[]>([]);
@@ -455,6 +458,7 @@ export function WatchPageShell({
           output?: {
             subtitles: string[];
             audio: string[];
+            fonts?: string[];
           };
           error?: string;
         };
@@ -600,6 +604,7 @@ export function WatchPageShell({
         onSelectExternalAudio={setActiveAudioTrackId}
         audioLoadingLabel={audioLoadingLabel}
         audioLoadingMode={audioLoadingMode}
+        restrictForwardSeeksToBuffered={restrictForwardSeeksToBuffered}
       />
     </>
   );

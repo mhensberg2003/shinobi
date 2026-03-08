@@ -1,19 +1,13 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Seedbox Setup
+## Playback Setup
 
-This repo now uses qBittorrent's Web API for torrent control. Preferred environment variables are:
+This repo now expects the media backend for Real-Debrid-backed playback. Frontend variables are:
 
 ```bash
-SEEDBOX_API_URL=
-SEEDBOX_API_USER=
-SEEDBOX_API_PASSWORD=
-SEEDBOX_HTTP_BASE_URL=
+SHINOBI_BACKEND_URL=
+SHINOBI_BACKEND_SECRET=
 ```
-
-Legacy `SEEDBOX_RPC_*` variables are still accepted as migration aliases.
-
-Feral-specific notes live in [docs/feral-migration.md](/home/malth/projects/shinobi/docs/feral-migration.md).
 
 ## Getting Started
 
