@@ -1,7 +1,15 @@
 import "server-only";
 
 import { requireMediaBackendConfig } from "./config";
-import type { BackendInspectedStream, BackendJob, BackendWatchSession } from "./types";
+import type {
+  BackendAutoResolveStatus,
+  BackendAutoResolvedWatch,
+  BackendCachedArtifacts,
+  BackendInspectedStream,
+  BackendJob,
+  BackendPlaybackAssessment,
+  BackendWatchSession,
+} from "./types";
 
 async function backendFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const config = requireMediaBackendConfig();
@@ -22,16 +30,32 @@ async function backendFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function inspectMediaSource(sourceUrl: string): Promise<BackendInspectedStream[]> {
-  const payload = await backendFetch<{ streams: BackendInspectedStream[] }>("/inspect", {
+export async function inspectMediaSource(input: {
+  sourceUrl: string;
+  torrentHash?: string;
+  fileIndex?: number;
+}): Promise<{
+  streams: BackendInspectedStream[];
+  cachedArtifacts: BackendCachedArtifacts;
+  playback: BackendPlaybackAssessment;
+}> {
+  const payload = await backendFetch<{
+    streams: BackendInspectedStream[];
+    cachedArtifacts?: BackendCachedArtifacts;
+    playback: BackendPlaybackAssessment;
+  }>("/inspect", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ sourceUrl }),
+    body: JSON.stringify(input),
   });
 
-  return payload.streams;
+  return {
+    streams: payload.streams,
+    cachedArtifacts: payload.cachedArtifacts ?? { subtitles: {}, audio: {} },
+    playback: payload.playback,
+  };
 }
 
 export async function createDemuxJob(input: {
@@ -118,4 +142,33 @@ export async function resolveWatchSession(
     },
     body: JSON.stringify({ sessionKey }),
   });
+}
+
+export async function autoResolveWatch(input: {
+  requestKey?: string;
+  title: string;
+  alternateTitles?: string[];
+  provider?: "anilist" | "tmdb";
+  mediaId?: string;
+  kind?: "anime" | "movie" | "show";
+  posterUrl?: string;
+  episodeNumber?: number;
+  episodeTotal?: number;
+  year?: number;
+}): Promise<BackendAutoResolvedWatch> {
+  return backendFetch<BackendAutoResolvedWatch>("/watch/auto-resolve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getAutoResolveStatus(requestKey: string): Promise<BackendAutoResolveStatus> {
+  const payload = await backendFetch<{ status: BackendAutoResolveStatus }>(
+    `/watch/auto-resolve/status?requestKey=${encodeURIComponent(requestKey)}`,
+  );
+
+  return payload.status;
 }

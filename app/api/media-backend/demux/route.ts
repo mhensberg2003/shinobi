@@ -39,7 +39,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const streams = await inspectMediaSource(body.sourceUrl);
+    const inspectResult = await inspectMediaSource({
+      sourceUrl: body.sourceUrl,
+      torrentHash: body.torrentHash,
+      fileIndex,
+    });
+    const streams = inspectResult.streams;
     const subtitleStream =
       body.subtitleTrack && Number.isInteger(body.subtitleTrack.streamIndex)
         ? streams.find(

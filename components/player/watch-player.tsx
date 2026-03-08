@@ -1,9 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+type JassubInstance = { destroy(): Promise<void> };
+type JassubCtor = new (opts: Record<string, unknown>) => JassubInstance;
+type PgsRendererInstance = { dispose(): void; renderAtTimestamp(ts: number): void };
+type PgsRendererCtor = new (opts: Record<string, unknown>) => PgsRendererInstance;
 
-type SubtitleTrack = { index: number; label: string; src: string; language?: string; default?: boolean };
+// Opaque to both TypeScript's module resolver and webpack — loads from /public at runtime
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const loadUrl = new Function("url", "return import(url)") as <T>(url: string) => Promise<T>;
+
+type SubtitleTrack = {
+  index: number;
+  label: string;
+  src: string;
+  language?: string;
+  default?: boolean;
+  format?: "text" | "pgs" | "ass";
+};
 type AudioTrackOption = { id: number; label: string; language?: string };
 type PlayerTextTrackOption = { id: number; label: string; language?: string; kind: string };
 type BackendTrackOption = {
@@ -30,6 +45,7 @@ type WatchPlayerProps = {
   backendSubtitleOptions?: BackendTrackOption[];
   backendAudioOptions?: BackendTrackOption[];
   onExtractSubtitle?: (id: number) => void;
+  onDisableSubtitle?: () => void;
   onExtractAudio?: (id: number) => void;
   preferredSubtitleLabel?: string | null;
   subtitleLoadingLabel?: string | null;
@@ -37,13 +53,26 @@ type WatchPlayerProps = {
   selectedExternalAudioId?: number | null;
   onSelectExternalAudio?: (id: number | null) => void;
   audioLoadingLabel?: string | null;
+  audioLoadingMode?: "extract" | "transcode" | null;
 };
 
-type StoredProgress = { title: string; currentTime: number; duration: number; updatedAt: string; posterUrl?: string; episodeNumber?: number; episodeTotal?: number; sessionKey?: string };
+type StoredProgress = {
+  title: string;
+  currentTime: number;
+  duration: number;
+  updatedAt: string;
+  posterUrl?: string;
+  episodeNumber?: number;
+  episodeTotal?: number;
+  sessionKey?: string;
+  selectedExternalAudioLabel?: string;
+};
 
 type HTMLVideoElementWithAudioTracks = HTMLVideoElement & {
   audioTracks?: ArrayLike<{ enabled: boolean; label?: string; language?: string }> & EventTarget;
 };
+const KEYBOARD_SEEK_SECONDS = 10;
+const SEEK_BUFFER_MARGIN_SECONDS = 5;
 const subtitleDebugEnabled = process.env.NEXT_PUBLIC_SUBTITLE_DEBUG === "1";
 
 function logSubtitleDebug(event: string, details: Record<string, unknown>) {
@@ -97,6 +126,66 @@ function resolvePreferredTitle(currentTitle: string, savedTitle?: string): strin
   return currentTitle;
 }
 
+function waitForAudioReady(audio: HTMLAudioElement, timeoutMs = 15_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out while loading external audio."));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      audio.removeEventListener("loadedmetadata", onReady);
+      audio.removeEventListener("canplay", onReady);
+      audio.removeEventListener("error", onError);
+    };
+
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error("The selected external audio track could not be loaded."));
+    };
+
+    audio.addEventListener("loadedmetadata", onReady);
+    audio.addEventListener("canplay", onReady);
+    audio.addEventListener("error", onError);
+  });
+}
+
+async function safePlay(
+  media: HTMLMediaElement,
+  context: string,
+  details: Record<string, unknown> = {},
+): Promise<boolean> {
+  try {
+    await media.play();
+    return true;
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "NotAllowedError")
+    ) {
+      console.info("[shinobi:player] play interrupted", {
+        context,
+        error: error.name,
+        ...details,
+      });
+      return false;
+    }
+
+    console.warn("[shinobi:player] play failed", {
+      context,
+      error: error instanceof Error ? error.message : String(error),
+      ...details,
+    });
+    return false;
+  }
+}
+
 function writeProgress(key: string, p: StoredProgress) {
   try {
     const existing = readProgress(key);
@@ -113,6 +202,36 @@ function writeProgress(key: string, p: StoredProgress) {
 
     localStorage.setItem(key, JSON.stringify(next));
   } catch {}
+}
+
+function sendClientDebug(scope: string, message: string, details: Record<string, unknown> = {}) {
+  try {
+    void fetch("/api/debug/client-log", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scope, message, details }),
+      keepalive: true,
+    });
+  } catch {}
+}
+
+function isKeyboardShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return true;
+  }
+
+  if (target.isContentEditable) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
+    return false;
+  }
+
+  return true;
 }
 
 // SVG icons
@@ -178,6 +297,7 @@ export function WatchPlayer({
   backendSubtitleOptions = [],
   backendAudioOptions = [],
   onExtractSubtitle,
+  onDisableSubtitle,
   onExtractAudio,
   preferredSubtitleLabel,
   subtitleLoadingLabel,
@@ -185,13 +305,21 @@ export function WatchPlayer({
   selectedExternalAudioId = null,
   onSelectExternalAudio,
   audioLoadingLabel,
+  audioLoadingMode,
 }: WatchPlayerProps) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<HTMLVideoElement | null>(null);
+  const assCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const subtitleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const externalAudioRef = useRef<HTMLAudioElement | null>(null);
   const hideTimer = useRef<number | null>(null);
+  const seekToastTimerRef = useRef<number | null>(null);
   const restorePendingRef = useRef(false);
+  const resumeAfterSeekRef = useRef(false);
+  const seekingRef = useRef(false);
+  const assRendererRef = useRef<JassubInstance | null>(null);
+  const pgsRendererRef = useRef<PgsRendererInstance | null>(null);
 
   const [saved] = useState(() => readProgress(storageKey));
   const hasResumePoint = Boolean(saved?.currentTime && saved.currentTime > 5);
@@ -204,11 +332,14 @@ export function WatchPlayer({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [seekToastVisible, setSeekToastVisible] = useState(false);
   const [isFs, setIsFs] = useState(false);
   const [subMenu, setSubMenu] = useState(false);
   const [audioMenu, setAudioMenu] = useState(false);
   const [textTracks, setTextTracks] = useState<PlayerTextTrackOption[]>([]);
   const [selectedSub, setSelectedSub] = useState<number | null>(null);
+  const [selectedAssSubtitleId, setSelectedAssSubtitleId] = useState<number | null>(null);
+  const [selectedBitmapSubtitleId, setSelectedBitmapSubtitleId] = useState<number | null>(null);
   const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
   const [trackLoadingVisible, setTrackLoadingVisible] = useState(false);
@@ -216,10 +347,56 @@ export function WatchPlayer({
   const effectiveTitle = resolvePreferredTitle(title, saved?.title);
   const effectiveEpisodeNumber = episodeNumber ?? saved?.episodeNumber;
   const effectiveEpisodeTotal = episodeTotal ?? saved?.episodeTotal;
+  const textSubtitleSources = useMemo(
+    () => subtitles.filter((subtitle) => subtitle.format === undefined || subtitle.format === "text"),
+    [subtitles],
+  );
+  const assSubtitleSources = useMemo(
+    () => subtitles.filter((subtitle) => subtitle.format === "ass"),
+    [subtitles],
+  );
+  const bitmapSubtitleSources = useMemo(
+    () => subtitles.filter((subtitle) => subtitle.format === "pgs"),
+    [subtitles],
+  );
+  const selectedAssSubtitle = useMemo(
+    () => assSubtitleSources.find((subtitle) => subtitle.index === selectedAssSubtitleId) ?? null,
+    [assSubtitleSources, selectedAssSubtitleId],
+  );
+  const selectedBitmapSubtitle = useMemo(
+    () =>
+      bitmapSubtitleSources.find((subtitle) => subtitle.index === selectedBitmapSubtitleId) ?? null,
+    [bitmapSubtitleSources, selectedBitmapSubtitleId],
+  );
+  const selectedExternalAudioLabel =
+    externalAudioTracks.find((track) => track.id === selectedExternalAudioId)?.label ?? null;
   const topBarTitle =
     effectiveEpisodeNumber != null
       ? `${effectiveTitle} • Episode ${effectiveEpisodeNumber}${effectiveEpisodeTotal != null ? `/${effectiveEpisodeTotal}` : ""}`
       : effectiveTitle;
+  const subtitlesOff =
+    selectedSub === null && selectedAssSubtitleId === null && selectedBitmapSubtitleId === null;
+  const hasSelectedSubtitle =
+    selectedSub !== null || selectedAssSubtitleId !== null || selectedBitmapSubtitleId !== null;
+
+  useEffect(() => {
+    sendClientDebug("watch-player", "mount", {
+      sessionKey,
+      torrentHash,
+      fileIndex,
+      streamUrl,
+      subtitleCount: subtitles.length,
+      externalAudioCount: externalAudioTracks.length,
+    });
+  }, [externalAudioTracks.length, fileIndex, sessionKey, streamUrl, subtitles.length, torrentHash]);
+
+  useEffect(() => {
+    return () => {
+      if (seekToastTimerRef.current) {
+        window.clearTimeout(seekToastTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!sessionKey || !magnetLink) {
@@ -303,6 +480,9 @@ export function WatchPlayer({
     let interval: number | null = null;
     let completeTimer: number | null = null;
     const startedAt = Date.now();
+    const isAudioTranscode = audioLoadingMode === "transcode";
+    const linearDurationMs = isAudioTranscode ? 60_000 : 20_000;
+    const tailDurationMs = isAudioTranscode ? 22_000 : 9_000;
 
     if (trackLoading) {
       setTrackLoadingVisible(true);
@@ -311,9 +491,9 @@ export function WatchPlayer({
       interval = window.setInterval(() => {
         const elapsed = Date.now() - startedAt;
         const nextProgress =
-          elapsed <= 20_000
-            ? 4 + (elapsed / 20_000) * 84
-            : 88 + (1 - Math.exp(-(elapsed - 20_000) / 9_000)) * 10;
+          elapsed <= linearDurationMs
+            ? 4 + (elapsed / linearDurationMs) * 84
+            : 88 + (1 - Math.exp(-(elapsed - linearDurationMs) / tailDurationMs)) * 10;
 
         setLoadingProgress((current) => Math.max(current, Math.min(98, nextProgress)));
       }, 120);
@@ -332,7 +512,7 @@ export function WatchPlayer({
         window.clearTimeout(completeTimer);
       }
     };
-  }, [trackLoading, trackLoadingVisible]);
+  }, [audioLoadingMode, trackLoading, trackLoadingVisible]);
 
   useEffect(() => {
     const p = playerRef.current;
@@ -428,7 +608,7 @@ export function WatchPlayer({
     function onMeta() {
       logSubtitleDebug("video-loaded-metadata", {
         streamUrl,
-        subtitlePropCount: subtitles.length,
+        subtitlePropCount: textSubtitleSources.length,
       });
       sync();
       if (!restored && hasResumePoint && saved?.currentTime) {
@@ -448,7 +628,10 @@ export function WatchPlayer({
       if (selectedExternalAudioId !== null && externalAudio) {
         externalAudio.currentTime = video.currentTime;
         externalAudio.playbackRate = video.playbackRate;
-        void externalAudio.play().catch(() => {});
+        void safePlay(externalAudio, "video-play-sync-audio", {
+          torrentHash,
+          fileIndex,
+        });
       }
       setPlaying(true);
     }
@@ -457,14 +640,34 @@ export function WatchPlayer({
       externalAudio?.pause();
       if (!p) return;
       setPlaying(false);
-      if (p.currentTime > 0) writeProgress(storageKey, { title: effectiveTitle, currentTime: p.currentTime, duration: Number.isFinite(p.duration) ? p.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal, sessionKey });
+      if (p.currentTime > 0) writeProgress(storageKey, {
+        title: effectiveTitle,
+        currentTime: p.currentTime,
+        duration: Number.isFinite(p.duration) ? p.duration : 0,
+        updatedAt: new Date().toISOString(),
+        posterUrl,
+        episodeNumber: effectiveEpisodeNumber,
+        episodeTotal: effectiveEpisodeTotal,
+        sessionKey,
+        selectedExternalAudioLabel: selectedExternalAudioLabel ?? undefined,
+      });
       setShowControls(true);
     }
     function onEnded() {
       const externalAudio = externalAudioRef.current;
       externalAudio?.pause();
       externalAudio?.removeAttribute("src");
-      writeProgress(storageKey, { title: effectiveTitle, currentTime: 0, duration: 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal, sessionKey });
+      writeProgress(storageKey, {
+        title: effectiveTitle,
+        currentTime: 0,
+        duration: 0,
+        updatedAt: new Date().toISOString(),
+        posterUrl,
+        episodeNumber: effectiveEpisodeNumber,
+        episodeTotal: effectiveEpisodeTotal,
+        sessionKey,
+        selectedExternalAudioLabel: selectedExternalAudioLabel ?? undefined,
+      });
       setPlaying(false);
       setShowControls(true);
     }
@@ -491,17 +694,39 @@ export function WatchPlayer({
     }
     function onSeeked() {
       const externalAudio = externalAudioRef.current;
+      seekingRef.current = false;
+      const shouldResume = resumeAfterSeekRef.current;
+      resumeAfterSeekRef.current = false;
       if (restorePendingRef.current) {
         sync();
         finishRestore();
       }
-      if (!externalAudio || selectedExternalAudioId === null) {
-        return;
+
+      if (shouldResume) {
+        if (video.paused) {
+          void safePlay(video, "seeked-resume-video", {
+            torrentHash,
+            fileIndex,
+          });
+        }
       }
-      externalAudio.currentTime = video.currentTime;
-      if (!video.paused) {
-        void externalAudio.play().catch(() => {});
+
+      if (externalAudio && selectedExternalAudioId !== null) {
+        externalAudio.currentTime = video.currentTime;
+        if (!video.paused || shouldResume) {
+          void safePlay(externalAudio, "seeked-resume-audio", {
+            torrentHash,
+            fileIndex,
+            externalAudioId: selectedExternalAudioId,
+          });
+        }
       }
+    }
+    function onSeeking() {
+      seekingRef.current = true;
+      resumeAfterSeekRef.current = !video.paused;
+      const externalAudio = externalAudioRef.current;
+      externalAudio?.pause();
     }
     function onRateChange() {
       const externalAudio = externalAudioRef.current;
@@ -520,6 +745,7 @@ export function WatchPlayer({
     video.addEventListener("volumechange", onVol);
     video.addEventListener("progress", onProg);
     video.addEventListener("ended", onEnded);
+    video.addEventListener("seeking", onSeeking);
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("ratechange", onRateChange);
     video.textTracks.addEventListener("change", onTextTrackListChange);
@@ -531,7 +757,17 @@ export function WatchPlayer({
 
     const interval = window.setInterval(() => {
       if (!video.paused && video.currentTime > 0)
-        writeProgress(storageKey, { title: effectiveTitle, currentTime: video.currentTime, duration: Number.isFinite(video.duration) ? video.duration : 0, updatedAt: new Date().toISOString(), posterUrl, episodeNumber: effectiveEpisodeNumber, episodeTotal: effectiveEpisodeTotal, sessionKey });
+        writeProgress(storageKey, {
+          title: effectiveTitle,
+          currentTime: video.currentTime,
+          duration: Number.isFinite(video.duration) ? video.duration : 0,
+          updatedAt: new Date().toISOString(),
+          posterUrl,
+          episodeNumber: effectiveEpisodeNumber,
+          episodeTotal: effectiveEpisodeTotal,
+          sessionKey,
+          selectedExternalAudioLabel: selectedExternalAudioLabel ?? undefined,
+        });
     }, 5000);
 
     return () => {
@@ -543,6 +779,7 @@ export function WatchPlayer({
       video.removeEventListener("volumechange", onVol);
       video.removeEventListener("progress", onProg);
       video.removeEventListener("ended", onEnded);
+      video.removeEventListener("seeking", onSeeking);
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("ratechange", onRateChange);
       video.textTracks.removeEventListener("change", onTextTrackListChange);
@@ -552,7 +789,21 @@ export function WatchPlayer({
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("addtrack", onAudioTrackListChange);
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("removetrack", onAudioTrackListChange);
     };
-  }, [restored, saved, storageKey, subtitles, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId, sessionKey]);
+  }, [restored, saved, storageKey, textSubtitleSources, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId, sessionKey, selectedExternalAudioLabel, streamUrl]);
+
+  useEffect(() => {
+    if (selectedExternalAudioId !== null || !saved?.selectedExternalAudioLabel || externalAudioTracks.length === 0) {
+      return;
+    }
+
+    const matchedTrack = externalAudioTracks.find(
+      (track) => track.label === saved.selectedExternalAudioLabel,
+    );
+
+    if (matchedTrack) {
+      onSelectExternalAudio?.(matchedTrack.id);
+    }
+  }, [externalAudioTracks, onSelectExternalAudio, saved?.selectedExternalAudioLabel, selectedExternalAudioId]);
 
   useEffect(() => {
     const video = playerRef.current;
@@ -582,7 +833,11 @@ export function WatchPlayer({
     video.muted = true;
 
     if (!video.paused) {
-      void audio.play().catch(() => {});
+      void safePlay(audio, "selected-external-audio-effect", {
+        torrentHash,
+        fileIndex,
+        externalAudioId: selectedExternalAudio.id,
+      });
     }
   }, [selectedExternalAudioId, externalAudioTracks, muted, volume]);
 
@@ -595,6 +850,191 @@ export function WatchPlayer({
       track.mode = index === selectedSub ? "showing" : "disabled";
     });
   }, [selectedSub, textTracks.length]);
+
+  useEffect(() => {
+    if (!preferredSubtitleLabel) {
+      return;
+    }
+
+    const matchingBitmapSubtitle =
+      bitmapSubtitleSources.find((subtitle) => subtitle.label === preferredSubtitleLabel) ?? null;
+
+    if (!matchingBitmapSubtitle) {
+      return;
+    }
+
+    const video = playerRef.current;
+    if (video) {
+      Array.from(video.textTracks).forEach((track) => {
+        if (track.kind !== "subtitles" && track.kind !== "captions") return;
+        track.mode = "disabled";
+      });
+    }
+
+    setSelectedSub(null);
+    setSelectedAssSubtitleId(null);
+    setSelectedBitmapSubtitleId(matchingBitmapSubtitle.index);
+  }, [bitmapSubtitleSources, preferredSubtitleLabel]);
+
+  useEffect(() => {
+    if (!preferredSubtitleLabel) {
+      return;
+    }
+
+    const matchingAssSubtitle =
+      assSubtitleSources.find((subtitle) => subtitle.label === preferredSubtitleLabel) ?? null;
+
+    if (!matchingAssSubtitle) {
+      return;
+    }
+
+    const video = playerRef.current;
+    if (video) {
+      Array.from(video.textTracks).forEach((track) => {
+        if (track.kind !== "subtitles" && track.kind !== "captions") return;
+        track.mode = "disabled";
+      });
+    }
+
+    setSelectedSub(null);
+    setSelectedBitmapSubtitleId(null);
+    setSelectedAssSubtitleId(matchingAssSubtitle.index);
+  }, [assSubtitleSources, preferredSubtitleLabel]);
+
+  useEffect(() => {
+    const video = playerRef.current;
+    const canvas = assCanvasRef.current;
+
+    void assRendererRef.current?.destroy();
+    assRendererRef.current = null;
+
+    if (!video || !canvas || !selectedAssSubtitle) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadUrl<{ default: JassubCtor }>("/jassub/jassub.bundle.js").then(({ default: Jassub }) => {
+      if (cancelled) {
+        return;
+      }
+
+      assRendererRef.current = new Jassub({
+        video,
+        canvas,
+        subUrl: selectedAssSubtitle.src,
+        workerUrl: "/jassub/jassub-worker.js",
+        wasmUrl: "/jassub/wasm/jassub-worker.wasm",
+        modernWasmUrl: "/jassub/wasm/jassub-worker-modern.wasm",
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      void assRendererRef.current?.destroy();
+      assRendererRef.current = null;
+    };
+  }, [selectedAssSubtitle]);
+
+  useEffect(() => {
+    const video = playerRef.current;
+    const canvas = subtitleCanvasRef.current;
+
+    pgsRendererRef.current?.dispose();
+    pgsRendererRef.current = null;
+
+    if (!video || !canvas || !selectedBitmapSubtitle) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadUrl<{ PgsRenderer: PgsRendererCtor }>("/libpgs.bundle.js").then(({ PgsRenderer }) => {
+      if (cancelled) {
+        return;
+      }
+
+      pgsRendererRef.current?.dispose();
+      pgsRendererRef.current = new PgsRenderer({
+        video,
+        canvas,
+        subUrl: selectedBitmapSubtitle.src,
+        workerUrl: "/libpgs.worker.js",
+        aspectRatio: "contain",
+        mode: "mainThread",
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      pgsRendererRef.current?.dispose();
+      pgsRendererRef.current = null;
+    };
+  }, [selectedBitmapSubtitle]);
+
+  useEffect(() => {
+    const video = playerRef.current;
+    const canvas = subtitleCanvasRef.current;
+
+    if (!video || !canvas || selectedBitmapSubtitleId === null) {
+      return;
+    }
+
+    const syncCanvasSize = () => {
+      const width = Math.max(1, Math.round(video.clientWidth * window.devicePixelRatio));
+      const height = Math.max(1, Math.round(video.clientHeight * window.devicePixelRatio));
+
+      if (canvas.width !== width) {
+        canvas.width = width;
+      }
+      if (canvas.height !== height) {
+        canvas.height = height;
+      }
+    };
+
+    syncCanvasSize();
+
+    const resizeObserver = new ResizeObserver(() => {
+      syncCanvasSize();
+    });
+
+    resizeObserver.observe(video);
+    window.addEventListener("resize", syncCanvasSize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", syncCanvasSize);
+    };
+  }, [selectedBitmapSubtitleId]);
+
+  useEffect(() => {
+    const video = playerRef.current;
+    if (!video || selectedBitmapSubtitleId === null) {
+      return;
+    }
+
+    let frameId = 0;
+    let cancelled = false;
+
+    const renderFrame = () => {
+      if (cancelled) {
+        return;
+      }
+
+      if (pgsRendererRef.current) {
+        pgsRendererRef.current.renderAtTimestamp(video.currentTime);
+      }
+
+      frameId = window.requestAnimationFrame(renderFrame);
+    };
+
+    frameId = window.requestAnimationFrame(renderFrame);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [selectedBitmapSubtitleId]);
 
   useEffect(() => {
     const handler = () => setIsFs(Boolean(document.fullscreenElement));
@@ -611,16 +1051,54 @@ export function WatchPlayer({
 
   function reveal() { setShowControls(true); scheduleHide(); }
 
+  function showSeekToast() {
+    setSeekToastVisible(true);
+    if (seekToastTimerRef.current) {
+      window.clearTimeout(seekToastTimerRef.current);
+    }
+    seekToastTimerRef.current = window.setTimeout(() => {
+      setSeekToastVisible(false);
+      seekToastTimerRef.current = null;
+    }, 1800);
+  }
+
+  function getBufferedSeekLimit(video: HTMLVideoElement): number {
+    const { buffered: ranges, currentTime: now } = video;
+    const tolerance = 0.35;
+
+    if (!ranges.length) {
+      return now;
+    }
+
+    for (let index = 0; index < ranges.length; index += 1) {
+      const start = ranges.start(index);
+      const end = ranges.end(index);
+
+      if (now >= start - tolerance && now <= end + tolerance) {
+        return Math.max(now, end - SEEK_BUFFER_MARGIN_SECONDS);
+      }
+    }
+
+    return now;
+  }
+
   function togglePlay() {
     if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
     if (p.paused) {
-      void p.play();
+      void safePlay(p, "toggle-play-video", {
+        torrentHash,
+        fileIndex,
+      });
       if (selectedExternalAudioId !== null && externalAudio) {
         externalAudio.currentTime = p.currentTime;
-        void externalAudio.play().catch(() => {});
+        void safePlay(externalAudio, "toggle-play-audio", {
+          torrentHash,
+          fileIndex,
+          externalAudioId: selectedExternalAudioId,
+        });
       }
       scheduleHide();
     } else {
@@ -634,11 +1112,24 @@ export function WatchPlayer({
     const p = playerRef.current;
     const externalAudio = externalAudioRef.current;
     if (!p) return;
-    p.currentTime = t;
-    if (selectedExternalAudioId !== null && externalAudio) {
-      externalAudio.currentTime = t;
+    const maxTime = duration || p.duration || 0;
+    const targetTime = Math.max(0, Math.min(t, maxTime));
+    const bufferedSeekLimit = Math.min(maxTime, getBufferedSeekLimit(p));
+    const limitedTime =
+      targetTime > p.currentTime && targetTime > bufferedSeekLimit
+        ? Math.max(p.currentTime, bufferedSeekLimit)
+        : targetTime;
+
+    if (limitedTime !== targetTime) {
+      showSeekToast();
     }
-    setCurrentTime(t);
+
+    resumeAfterSeekRef.current = !p.paused;
+    p.currentTime = limitedTime;
+    if (selectedExternalAudioId !== null && externalAudio) {
+      externalAudio.currentTime = limitedTime;
+    }
+    setCurrentTime(limitedTime);
   }
 
   function seekBy(d: number) {
@@ -695,10 +1186,51 @@ export function WatchPlayer({
     else await c.requestFullscreen();
   }
 
+  const onKeyboardShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || !isKeyboardShortcutTarget(event.target)) {
+      return;
+    }
+
+    if ((event.key === " " || event.code === "Space") && !event.repeat) {
+      event.preventDefault();
+      togglePlay();
+      reveal();
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      seekBy(-KEYBOARD_SEEK_SECONDS);
+      reveal();
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      seekBy(KEYBOARD_SEEK_SECONDS);
+      reveal();
+      return;
+    }
+
+    if (event.key === "m" || event.key === "M") {
+      event.preventDefault();
+      toggleMute();
+      reveal();
+    }
+  });
+
+  useEffect(() => {
+    window.addEventListener("keydown", onKeyboardShortcut);
+    return () => window.removeEventListener("keydown", onKeyboardShortcut);
+  }, []);
+
   function selectSub(idx: number | null) {
     if (!resumeReady || trackLoading) return;
     const p = playerRef.current;
     if (!p) return;
+    if (idx === null) {
+      onDisableSubtitle?.();
+    }
     Array.from(p.textTracks).forEach((track, index) => {
       if (track.kind !== "subtitles" && track.kind !== "captions") return;
       track.mode = index === idx ? "showing" : "disabled";
@@ -713,7 +1245,37 @@ export function WatchPlayer({
         kind: track.kind,
       })),
     });
+    setSelectedAssSubtitleId(null);
+    setSelectedBitmapSubtitleId(null);
     setSelectedSub(idx);
+    setSubMenu(false);
+  }
+
+  function selectAssSubtitle(id: number) {
+    if (!resumeReady || trackLoading) return;
+    const p = playerRef.current;
+    if (!p) return;
+    Array.from(p.textTracks).forEach((track) => {
+      if (track.kind !== "subtitles" && track.kind !== "captions") return;
+      track.mode = "disabled";
+    });
+    setSelectedSub(null);
+    setSelectedBitmapSubtitleId(null);
+    setSelectedAssSubtitleId(id);
+    setSubMenu(false);
+  }
+
+  function selectBitmapSubtitle(id: number) {
+    if (!resumeReady || trackLoading) return;
+    const p = playerRef.current;
+    if (!p) return;
+    Array.from(p.textTracks).forEach((track) => {
+      if (track.kind !== "subtitles" && track.kind !== "captions") return;
+      track.mode = "disabled";
+    });
+    setSelectedSub(null);
+    setSelectedAssSubtitleId(null);
+    setSelectedBitmapSubtitleId(id);
     setSubMenu(false);
   }
 
@@ -759,7 +1321,7 @@ export function WatchPlayer({
     setAudioMenu(false);
   }
 
-  function selectExternalAudio(id: number) {
+  async function selectExternalAudio(id: number) {
     if (!resumeReady || trackLoading) return;
     const video = playerRef.current;
     const audio = externalAudioRef.current;
@@ -770,24 +1332,55 @@ export function WatchPlayer({
     setSelectedAudio(null);
     setAudioMenu(false);
 
-    audio.src = selectedTrack.src;
-    audio.currentTime = video.currentTime;
-    audio.volume = volume;
-    audio.muted = muted;
-    video.muted = true;
+    try {
+      audio.pause();
+      audio.src = selectedTrack.src;
+      audio.load();
+      await waitForAudioReady(audio);
+      audio.currentTime = video.currentTime;
+      audio.playbackRate = video.playbackRate;
+      audio.volume = volume;
+      audio.muted = muted;
+      video.muted = true;
 
-    if (!video.paused) {
-      void audio.play().catch(() => {});
+      if (!video.paused) {
+        await safePlay(audio, "select-external-audio", {
+          torrentHash,
+          fileIndex,
+          externalAudioId: id,
+        });
+      }
+    } catch {
+      onSelectExternalAudio?.(null);
+      if (video) {
+        video.muted = muted;
+        video.volume = volume;
+      }
     }
   }
 
   const playedPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
   const volPct = muted ? 0 : volume;
-  const hasSubtitleOptions = subtitles.length > 0 || textTracks.length > 0 || backendSubtitleOptions.length > 0;
-  const hasAudioOptions = audioTracks.length > 0 || backendAudioOptions.length > 0;
+  const hasSubtitleOptions =
+    textSubtitleSources.length > 0 ||
+    assSubtitleSources.length > 0 ||
+    bitmapSubtitleSources.length > 0 ||
+    textTracks.length > 0 ||
+    backendSubtitleOptions.length > 0;
+  const hasAudioOptions =
+    audioTracks.length > 0 || externalAudioTracks.length > 0 || backendAudioOptions.length > 0;
+  const hasDerivedAudioOptions = externalAudioTracks.length > 0 || backendAudioOptions.length > 0;
 
   const btnCls = "flex items-center justify-center rounded p-1.5 text-white/80 transition-colors hover:text-white hover:bg-white/10";
+  const trackLoadingMessage =
+    audioLoadingMode === "transcode"
+      ? "Transcoding audio to a browser-safe format. This can take up to about a minute."
+      : audioLoadingLabel
+        ? `Preparing audio track${audioLoadingLabel ? `: ${audioLoadingLabel}` : ""}`
+        : subtitleLoadingLabel
+          ? `Preparing subtitle track${subtitleLoadingLabel ? `: ${subtitleLoadingLabel}` : ""}`
+          : "Preparing track";
 
   return (
     <div
@@ -798,14 +1391,14 @@ export function WatchPlayer({
     >
       <video
         ref={playerRef}
+        className="shinobi-player"
         preload="auto"
-        poster={posterUrl}
         style={{ width: "100%", height: "100%", display: "block", objectFit: "contain", background: "#000", visibility: resumeReady ? "visible" : "hidden" }}
         src={streamUrl}
         onClick={togglePlay}
         controls={false}
       >
-        {subtitles.map((s) => (
+        {textSubtitleSources.map((s) => (
           <track
             key={s.index}
             kind="subtitles"
@@ -816,6 +1409,33 @@ export function WatchPlayer({
           />
         ))}
       </video>
+      <canvas
+        ref={assCanvasRef}
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          zIndex: 8,
+          display: selectedAssSubtitleId !== null ? "block" : "none",
+        }}
+      />
+      <canvas
+        ref={subtitleCanvasRef}
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          objectFit: "contain",
+          zIndex: 8,
+          display: selectedBitmapSubtitleId !== null ? "block" : "none",
+        }}
+      />
       <audio ref={externalAudioRef} preload="metadata" style={{ display: "none" }} />
 
       {!resumeReady ? (
@@ -823,6 +1443,17 @@ export function WatchPlayer({
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/18 border-t-white" />
         </div>
       ) : null}
+
+      <div
+        aria-live="polite"
+        className="pointer-events-none absolute left-1/2 top-5 z-20 -translate-x-1/2 rounded-full border border-white/12 bg-black/82 px-4 py-2 text-sm font-medium text-white shadow-[0_18px_48px_rgba(0,0,0,0.38)] transition-all duration-200"
+        style={{
+          opacity: seekToastVisible ? 1 : 0,
+          transform: `translateX(-50%) translateY(${seekToastVisible ? "0" : "-10px"})`,
+        }}
+      >
+        That part is not ready yet.
+      </div>
 
       {/* gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
@@ -932,7 +1563,7 @@ export function WatchPlayer({
             <button
               type="button"
               onClick={() => { setSubMenu(v => !v); setAudioMenu(false); }}
-              className={`${btnCls} ${selectedSub !== null ? "text-white" : ""} ${!hasSubtitleOptions ? "opacity-60" : ""}`}
+              className={`${btnCls} ${hasSelectedSubtitle ? "text-white" : ""} ${!hasSubtitleOptions ? "opacity-60" : ""}`}
               aria-label="Subtitles"
               title="Subtitles"
             >
@@ -940,81 +1571,154 @@ export function WatchPlayer({
             </button>
             {subMenu && (
               <div className="absolute bottom-10 right-0 z-20 min-w-[220px] rounded-lg border border-white/10 bg-[#1a1a1a] py-1 shadow-xl">
-                {textTracks.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => selectSub(null)}
-                      className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedSub === null ? "text-white" : "text-[var(--muted)]"}`}
-                    >
-                      Off
-                    </button>
-                    {textTracks.map(track => (
+                <div className="h-[min(18rem,calc(100vh-10rem))] overflow-y-auto overscroll-contain" style={{ scrollbarWidth: "none" }}>
+                  {textTracks.length > 0 ? (
+                    <>
                       <button
-                        key={track.id}
                         type="button"
-                        onClick={() => selectSub(track.id)}
-                        className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedSub === track.id ? "text-white" : "text-[var(--muted)]"}`}
+                        onClick={() => selectSub(null)}
+                        className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${subtitlesOff ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
                       >
-                        {track.label}
+                        Off
                       </button>
-                    ))}
-                    {backendSubtitleOptions.length > 0 ? (
-                      <>
-                        <div className="mx-3 my-2 h-px bg-white/10" />
-                        <p className="px-4 pb-1 text-[10px] uppercase tracking-[0.2em] text-white/35">
-                          Extract from source
-                        </p>
-                        {backendSubtitleOptions.map((track) => (
-                          <button
-                            key={track.id}
-                            type="button"
-                            onClick={() => {
-                              setSubMenu(false);
-                              onExtractSubtitle?.(track.id);
-                            }}
-                            disabled={track.state === "running"}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <span className="min-w-0 truncate text-[var(--muted)]">{track.label}</span>
-                          </button>
-                        ))}
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    {backendSubtitleOptions.length > 0 ? (
-                      <>
+                      {textTracks.map(track => (
                         <button
+                          key={track.id}
                           type="button"
-                          onClick={() => selectSub(null)}
-                          className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedSub === null ? "text-white" : "text-[var(--muted)]"}`}
+                          onClick={() => selectSub(track.id)}
+                          className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedSub === track.id ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
                         >
-                          Off
+                          {track.label}
                         </button>
-                        {backendSubtitleOptions.map((track) => (
+                      ))}
+                      {backendSubtitleOptions.length > 0 ? (
+                        <>
+                          <div className="mx-3 my-2 h-px bg-white/10" />
+                          {backendSubtitleOptions.map((track) => (
+                            <button
+                              key={track.id}
+                              type="button"
+                              onClick={() => {
+                                setSubMenu(false);
+                                onExtractSubtitle?.(track.id);
+                              }}
+                              disabled={track.state === "running"}
+                              className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50 ${
+                                preferredSubtitleLabel === track.label || subtitleLoadingLabel === track.label
+                                  ? "bg-white/10 font-medium text-white"
+                                  : "text-[var(--muted)]"
+                              }`}
+                            >
+                              <span className="min-w-0 truncate">{track.label}</span>
+                            </button>
+                          ))}
+                        </>
+                      ) : null}
+                      {bitmapSubtitleSources.length > 0 ? (
+                        <>
+                          <div className="mx-3 my-2 h-px bg-white/10" />
+                          {bitmapSubtitleSources.map((track) => (
+                            <button
+                              key={track.index}
+                              type="button"
+                              onClick={() => selectBitmapSubtitle(track.index)}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
+                                selectedBitmapSubtitleId === track.index
+                                  ? "bg-white/10 font-medium text-white"
+                                  : "text-[var(--muted)]"
+                              }`}
+                            >
+                              {track.label}
+                            </button>
+                          ))}
+                        </>
+                      ) : null}
+                      {assSubtitleSources.length > 0 ? (
+                        <>
+                          <div className="mx-3 my-2 h-px bg-white/10" />
+                          {assSubtitleSources.map((track) => (
+                            <button
+                              key={track.index}
+                              type="button"
+                              onClick={() => selectAssSubtitle(track.index)}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
+                                selectedAssSubtitleId === track.index
+                                  ? "bg-white/10 font-medium text-white"
+                                  : "text-[var(--muted)]"
+                              }`}
+                            >
+                              {track.label}
+                            </button>
+                          ))}
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      {backendSubtitleOptions.length > 0 || bitmapSubtitleSources.length > 0 || assSubtitleSources.length > 0 ? (
+                        <>
                           <button
-                            key={track.id}
                             type="button"
-                            onClick={() => {
-                              setSubMenu(false);
-                              onExtractSubtitle?.(track.id);
-                            }}
-                            disabled={track.state === "running"}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => selectSub(null)}
+                            className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${subtitlesOff ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
                           >
-                            <span className="min-w-0 truncate text-[var(--muted)]">{track.label}</span>
+                            Off
                           </button>
-                        ))}
-                      </>
-                    ) : (
-                      <p className="px-4 py-3 text-sm text-[var(--muted)]">
-                        No subtitle tracks detected for this video.
-                      </p>
-                    )}
-                  </>
-                )}
+                          {backendSubtitleOptions.map((track) => (
+                            <button
+                              key={track.id}
+                              type="button"
+                              onClick={() => {
+                                setSubMenu(false);
+                                onExtractSubtitle?.(track.id);
+                              }}
+                              disabled={track.state === "running"}
+                              className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50 ${
+                                preferredSubtitleLabel === track.label || subtitleLoadingLabel === track.label
+                                  ? "bg-white/10 font-medium text-white"
+                                  : "text-[var(--muted)]"
+                              }`}
+                            >
+                              <span className="min-w-0 truncate">{track.label}</span>
+                            </button>
+                          ))}
+                          {bitmapSubtitleSources.map((track) => (
+                            <button
+                              key={track.index}
+                              type="button"
+                              onClick={() => selectBitmapSubtitle(track.index)}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
+                                selectedBitmapSubtitleId === track.index
+                                  ? "bg-white/10 font-medium text-white"
+                                  : "text-[var(--muted)]"
+                              }`}
+                            >
+                              {track.label}
+                            </button>
+                          ))}
+                          {assSubtitleSources.map((track) => (
+                            <button
+                              key={track.index}
+                              type="button"
+                              onClick={() => selectAssSubtitle(track.index)}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
+                                selectedAssSubtitleId === track.index
+                                  ? "bg-white/10 font-medium text-white"
+                                  : "text-[var(--muted)]"
+                              }`}
+                            >
+                              {track.label}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <p className="px-4 py-3 text-sm text-[var(--muted)]">
+                          No subtitle tracks detected for this video.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1024,7 +1728,7 @@ export function WatchPlayer({
             <button
               type="button"
               onClick={() => { setAudioMenu(v => !v); setSubMenu(false); }}
-              className={`${btnCls} ${!hasAudioOptions ? "opacity-60" : ""}`}
+              className={`${btnCls} ${selectedAudio !== null || selectedExternalAudioId !== null ? "text-white" : ""} ${!hasAudioOptions ? "opacity-60" : ""}`}
               aria-label="Audio tracks"
               title="Audio tracks"
             >
@@ -1034,99 +1738,101 @@ export function WatchPlayer({
             </button>
             {audioMenu && (
               <div className="absolute bottom-10 right-0 z-20 min-w-[220px] rounded-lg border border-white/10 bg-[#1a1a1a] py-1 shadow-xl">
-                <button
-                  type="button"
-                  onClick={selectOriginalAudio}
-                  className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === null ? "text-white" : "text-[var(--muted)]"}`}
-                >
-                  Original audio
-                </button>
-                {audioTracks.length > 0 ? (
-                  <>
-                    <div className="mx-3 my-2 h-px bg-white/10" />
-                    {audioTracks.map(t => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => selectAudio(t.id)}
-                        className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedAudio === t.id && selectedExternalAudioId === null ? "text-white" : "text-[var(--muted)]"}`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                    {externalAudioTracks.length > 0 ? (
-                      <>
-                        <div className="mx-3 my-2 h-px bg-white/10" />
-                        {externalAudioTracks.map((track) => (
-                          <button
-                            key={track.id}
-                            type="button"
-                            onClick={() => selectExternalAudio(track.id)}
-                            className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === track.id ? "text-white" : "text-[var(--muted)]"}`}
-                          >
-                            {track.label}
-                          </button>
-                        ))}
-                      </>
-                    ) : null}
-                    {backendAudioOptions.length > 0 ? (
-                      <>
-                        <div className="mx-3 my-2 h-px bg-white/10" />
-                        <p className="px-4 pb-1 text-[10px] uppercase tracking-[0.2em] text-white/35">
-                          Extract from source
-                        </p>
-                        {backendAudioOptions.map((track) => (
-                          <button
-                            key={track.id}
-                            type="button"
-                            onClick={() => onExtractAudio?.(track.id)}
-                            disabled={track.state === "running"}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <span className="min-w-0 truncate text-[var(--muted)]">{track.label}</span>
-                          </button>
-                        ))}
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    {backendAudioOptions.length > 0 ? (
-                      <>
-                        {externalAudioTracks.length > 0 ? (
-                          externalAudioTracks.map((track) => (
+                <div className="h-[min(18rem,calc(100vh-10rem))] overflow-y-auto overscroll-contain" style={{ scrollbarWidth: "none" }}>
+                  <button
+                    type="button"
+                    onClick={selectOriginalAudio}
+                    className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === null && selectedAudio === null ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
+                  >
+                    Original audio
+                  </button>
+                  {audioTracks.length > 0 ? (
+                    <>
+                      <div className="mx-3 my-2 h-px bg-white/10" />
+                      {audioTracks.map(t => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => selectAudio(t.id)}
+                          className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedAudio === t.id && selectedExternalAudioId === null ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                      {externalAudioTracks.length > 0 ? (
+                        <>
+                          <div className="mx-3 my-2 h-px bg-white/10" />
+                          {externalAudioTracks.map((track) => (
                             <button
                               key={track.id}
                               type="button"
                               onClick={() => selectExternalAudio(track.id)}
-                              className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === track.id ? "text-white" : "text-[var(--muted)]"}`}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === track.id ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
                             >
                               {track.label}
                             </button>
-                          ))
-                        ) : null}
-                        {backendAudioOptions.map((track) => (
-                          <button
-                            key={track.id}
-                            type="button"
-                            onClick={() => {
-                              setAudioMenu(false);
-                              onExtractAudio?.(track.id);
-                            }}
-                            disabled={track.state === "running"}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <span className="min-w-0 truncate text-[var(--muted)]">{track.label}</span>
-                          </button>
-                        ))}
-                      </>
-                    ) : (
-                      <p className="px-4 py-3 text-sm text-[var(--muted)]">
-                        No selectable audio tracks were exposed by this browser for the current video.
-                      </p>
-                    )}
-                  </>
-                )}
+                          ))}
+                        </>
+                      ) : null}
+                      {backendAudioOptions.length > 0 ? (
+                        <>
+                          <div className="mx-3 my-2 h-px bg-white/10" />
+                          <p className="px-4 pb-1 text-[10px] uppercase tracking-[0.2em] text-white/35">
+                            Extract from source
+                          </p>
+                          {backendAudioOptions.map((track) => (
+                            <button
+                              key={track.id}
+                              type="button"
+                              onClick={() => onExtractAudio?.(track.id)}
+                              disabled={track.state === "running"}
+                              className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <span className="min-w-0 truncate text-[var(--muted)]">{track.label}</span>
+                            </button>
+                          ))}
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      {hasDerivedAudioOptions ? (
+                        <>
+                          {externalAudioTracks.length > 0 ? (
+                            externalAudioTracks.map((track) => (
+                              <button
+                                key={track.id}
+                                type="button"
+                                onClick={() => selectExternalAudio(track.id)}
+                                className={`w-full px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 ${selectedExternalAudioId === track.id ? "bg-white/10 font-medium text-white" : "text-[var(--muted)]"}`}
+                              >
+                                {track.label}
+                              </button>
+                            ))
+                          ) : null}
+                          {backendAudioOptions.map((track) => (
+                            <button
+                              key={track.id}
+                              type="button"
+                              onClick={() => {
+                                setAudioMenu(false);
+                                onExtractAudio?.(track.id);
+                              }}
+                              disabled={track.state === "running"}
+                              className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <span className="min-w-0 truncate text-[var(--muted)]">{track.label}</span>
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <p className="px-4 py-3 text-sm text-[var(--muted)]">
+                          No selectable audio tracks were exposed by this browser for the current video.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1164,6 +1870,9 @@ export function WatchPlayer({
                 className="h-full rounded-full bg-white"
               />
             </div>
+            <p className="mt-3 text-center text-sm text-white/60">
+              {trackLoadingMessage}
+            </p>
           </div>
         </div>
       ) : null}

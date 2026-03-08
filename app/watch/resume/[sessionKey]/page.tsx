@@ -1,6 +1,7 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
-import { resolveWatchSession } from "@/lib/media-backend/client";
+import { ResumeWatchProgress } from "@/components/player/resume-watch-progress";
+import { getWatchSession } from "@/lib/media-backend/client";
 import { getMediaBackendConfig } from "@/lib/media-backend/config";
 
 type PageProps = {
@@ -16,28 +17,10 @@ export default async function ResumeWatchPage({ params }: PageProps) {
     notFound();
   }
 
-  const resolved = await resolveWatchSession(sessionKey).catch(() => null);
-  if (!resolved?.session.torrentHash) {
+  const session = await getWatchSession(sessionKey).catch(() => null);
+  if (!session) {
     notFound();
   }
 
-  const query = new URLSearchParams({
-    file: String(resolved.session.fileIndex),
-    session: resolved.session.sessionKey,
-  });
-
-  if (resolved.session.title) {
-    query.set("title", resolved.session.title);
-  }
-  if (resolved.session.posterUrl) {
-    query.set("poster", resolved.session.posterUrl);
-  }
-  if (resolved.session.episodeNumber != null) {
-    query.set("ep", String(resolved.session.episodeNumber));
-  }
-  if (resolved.session.episodeTotal != null) {
-    query.set("eps", String(resolved.session.episodeTotal));
-  }
-
-  redirect(`/watch/${resolved.session.torrentHash}?${query.toString()}`);
+  return <ResumeWatchProgress session={session} />;
 }

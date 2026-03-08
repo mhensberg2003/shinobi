@@ -5,7 +5,7 @@ import { startTransition, useState } from "react";
 
 export function MagnetForm({
   heading = true,
-  successLabel = "Magnet submitted to rTorrent.",
+  successLabel = "Magnet submitted to qBittorrent.",
 }: {
   heading?: boolean;
   successLabel?: string;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSeedboxConfig } from "@/lib/seedbox/config";
-import { getTorrentDetails, selectOnlyTorrentFile } from "@/lib/seedbox/rtorrent";
+import { getTorrentDetails, selectOnlyTorrentFile } from "@/lib/seedbox/client";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         error:
-          "Missing seedbox configuration. Populate SEEDBOX_RPC_URL, SEEDBOX_RPC_USER, and SEEDBOX_RPC_PASSWORD.",
+          "Missing seedbox configuration. Populate SEEDBOX_API_URL, SEEDBOX_API_USER, and SEEDBOX_API_PASSWORD.",
       },
       { status: 503 },
     );

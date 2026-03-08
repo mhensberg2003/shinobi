@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
 
-import { WatchPageShell } from "@/components/player/watch-page-shell";
-import { getWatchSession } from "@/lib/media-backend/client";
+import { resolveWatchSession } from "@/lib/media-backend/client";
 import { getMediaBackendConfig } from "@/lib/media-backend/config";
-import { getSeedboxSnapshot, getTorrentDetails } from "@/lib/seedbox/rtorrent";
+import { getTorrentDetails } from "@/lib/seedbox/client";
+import { WatchPageShell } from "./watch-shell-loader";
 
 type PageProps = {
   params: Promise<{ hash: string }>;
@@ -14,11 +14,60 @@ export const dynamic = "force-dynamic";
 
 export default async function WatchPage({ params, searchParams }: PageProps) {
   const [{ hash }, { file, poster, title, ep, eps, session }] = await Promise.all([params, searchParams]);
-  const snapshot = await getSeedboxSnapshot();
+  const mediaBackendConfigured = Boolean(getMediaBackendConfig());
+  console.info("[shinobi:watch-page] route-start", {
+    hash,
+    file,
+    hasPoster: Boolean(poster),
+    hasTitle: Boolean(title),
+    ep,
+    eps,
+    session,
+  });
 
-  if (!snapshot.torrents.some((t) => t.hash === hash)) notFound();
+  if (session && mediaBackendConfigured) {
+    const resolution = await resolveWatchSession(session.trim()).catch(() => null);
+    const resolvedSession = resolution?.session;
 
-  const torrent = await getTorrentDetails(hash);
+    if (resolvedSession?.sourceUrl) {
+      console.info("[shinobi:watch-page] route-ready-session-source", {
+        hash,
+        session,
+        sourceProvider: resolvedSession.sourceProvider,
+        fileIndex: resolvedSession.fileIndex,
+      });
+
+      return (
+        <WatchPageShell
+          requiresStreamPreparation={false}
+          storageKey={`shinobi:watch-session:${resolvedSession.sessionKey}`}
+          sessionKey={resolvedSession.sessionKey}
+          title={title ?? resolvedSession.title ?? "Untitled"}
+          streamUrl={`/api/media-backend/watch-sessions/stream?sessionKey=${encodeURIComponent(resolvedSession.sessionKey)}`}
+          posterUrl={poster ?? resolvedSession.posterUrl}
+          episodeNumber={ep ? Number(ep) : resolvedSession.episodeNumber}
+          episodeTotal={eps ? Number(eps) : resolvedSession.episodeTotal}
+          magnetLink={resolvedSession.magnetLink}
+          torrentHash={resolvedSession.torrentHash ?? hash}
+          fileIndex={resolvedSession.fileIndex}
+          subtitles={[]}
+          demuxRequest={{
+            sourceUrl: resolvedSession.sourceUrl,
+            torrentHash: resolvedSession.torrentHash ?? hash,
+            fileIndex: resolvedSession.fileIndex,
+          }}
+        />
+      );
+    }
+  }
+
+  const torrent = await getTorrentDetails(hash.trim()).catch(() => null);
+
+  if (!torrent) {
+    console.info("[shinobi:watch-page] torrent-not-found", { hash });
+    notFound();
+  }
+
   const selectedIndex = Number(file ?? "");
   const selectedFile = Number.isInteger(selectedIndex)
     ? torrent.files.find((f) => f.index === selectedIndex)
@@ -27,10 +76,6 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
   if (!selectedFile) notFound();
 
   const prioritized = torrent.files.find((f) => f.index === selectedFile.index) ?? selectedFile;
-  const mediaBackendConfigured = Boolean(getMediaBackendConfig());
-  const watchSession =
-    session && mediaBackendConfigured ? await getWatchSession(session).catch(() => null) : null;
-
   const subtitleTracks = torrent.files
     .filter((f) => f.isSubtitle && f.streamUrl)
     .map((f) => ({
@@ -41,12 +86,24 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
     }));
 
   if (!prioritized.streamUrl) {
+    console.info("[shinobi:watch-page] missing-stream-url", {
+      hash: torrent.hash,
+      fileIndex: prioritized.index,
+    });
     return (
       <main style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#000" }}>
         <p style={{ color: "#666", fontSize: 14 }}>No stream URL available for this file.</p>
       </main>
     );
   }
+
+  console.info("[shinobi:watch-page] route-ready", {
+    hash: torrent.hash,
+    fileIndex: prioritized.index,
+    subtitleCount: subtitleTracks.length,
+    hasSession: Boolean(session),
+    mediaBackendConfigured,
+  });
 
   return (
     <WatchPageShell
@@ -57,7 +114,6 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
       posterUrl={poster}
       episodeNumber={ep ? Number(ep) : undefined}
       episodeTotal={eps ? Number(eps) : undefined}
-      magnetLink={watchSession?.magnetLink}
       torrentHash={torrent.hash}
       fileIndex={prioritized.index}
       subtitles={subtitleTracks}

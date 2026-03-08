@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getSeedboxConfig } from "@/lib/seedbox/config";
-import { getTorrentDetails } from "@/lib/seedbox/rtorrent";
+import { getTorrentDetails } from "@/lib/seedbox/client";
 
 export const dynamic = "force-dynamic";
 

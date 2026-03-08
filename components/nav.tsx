@@ -1,5 +1,6 @@
 "use client";
 
+import { ScrollArea } from "@/components/ui/scroll-area";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -104,33 +105,34 @@ export function Nav() {
 
         {/* results */}
         {results.length > 0 && (
-          <div style={{ background: "rgba(18,18,18,0.97)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.12)", borderTop: "1px solid rgba(255,255,255,0.06)", borderRadius: "0 0 12px 12px", overflow: "hidden", maxHeight: 420, overflowY: "auto" }}>
-            {results.map((item) => {
-              const href = `/title/${item.provider}/${item.id}${item.provider === "tmdb" ? `?kind=${item.kind}` : ""}`;
-              return (
-                <Link
-                  key={`${item.provider}-${item.id}`}
-                  href={href}
-                  onClick={close}
-                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.05)", transition: "background 0.12s" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.06)"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                >
-                  {/* tiny poster */}
-                  <div style={{ width: 36, height: 54, borderRadius: 5, overflow: "hidden", background: "#2a2a2a", flexShrink: 0 }}>
-                    {item.posterUrl && <img src={item.posterUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 13, fontWeight: 500, color: "#fff", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{item.title}</p>
-                    <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                      {[item.kind, item.year, item.subtitle].filter(Boolean).join(" · ")}
-                    </p>
-                  </div>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2"><polyline points="9,18 15,12 9,6"/></svg>
-                </Link>
-              );
-            })}
-          </div>
+          <ScrollArea className="max-h-[420px] overflow-hidden rounded-b-[12px] border border-white/12 border-t-white/6 bg-[rgba(18,18,18,0.97)]">
+            <div style={{ backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" }}>
+              {results.map((item) => {
+                const href = `/title/${item.provider}/${item.id}${item.provider === "tmdb" ? `?kind=${item.kind}` : ""}`;
+                return (
+                  <Link
+                    key={`${item.provider}-${item.id}`}
+                    href={href}
+                    onClick={close}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.05)", transition: "background 0.12s" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.06)"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                  >
+                    <div style={{ width: 36, height: 54, borderRadius: 5, overflow: "hidden", background: "#2a2a2a", flexShrink: 0 }}>
+                      {item.posterUrl && <img src={item.posterUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: 13, fontWeight: 500, color: "#fff", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{item.title}</p>
+                      <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                        {[item.kind, item.year, item.subtitle].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2"><polyline points="9,18 15,12 9,6"/></svg>
+                  </Link>
+                );
+              })}
+            </div>
+          </ScrollArea>
         )}
 
         {query.trim() && !loading && results.length === 0 && (

@@ -15,6 +15,9 @@ export async function GET(request: Request) {
     const response = await fetch(artifactUrl, {
       headers: {
         Authorization: `Bearer ${config.secret}`,
+        ...(request.headers.get("range")
+          ? { Range: request.headers.get("range") as string }
+          : {}),
       },
       cache: "no-store",
     });
@@ -27,13 +30,24 @@ export async function GET(request: Request) {
     }
 
     const headers = new Headers();
-    const contentType = response.headers.get("content-type");
-    if (contentType) {
-      headers.set("content-type", contentType);
+    for (const header of [
+      "content-type",
+      "content-length",
+      "content-range",
+      "accept-ranges",
+      "last-modified",
+      "etag",
+      "cache-control",
+    ]) {
+      const value = response.headers.get(header);
+      if (value) {
+        headers.set(header, value);
+      }
     }
+    headers.set("accept-ranges", "bytes");
 
     return new NextResponse(response.body, {
-      status: 200,
+      status: response.status,
       headers,
     });
   } catch (error) {

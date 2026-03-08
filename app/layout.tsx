@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
-import { Manrope, Syne } from "next/font/google";
+import { Manrope, Syne, Geist } from "next/font/google";
 import { Nav } from "@/components/nav";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 const manrope = Manrope({
   variable: "--font-manrope",
@@ -30,10 +34,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${manrope.variable} ${syne.variable} antialiased`}>
+    <html lang="en" className={cn("font-sans", geist.variable)}>
+      <body className={`${manrope.variable} ${syne.variable} h-screen overflow-hidden antialiased`}>
         <Nav />
-        {children}
+        <ScrollArea className="h-screen">
+          {children}
+        </ScrollArea>
       </body>
     </html>
   );

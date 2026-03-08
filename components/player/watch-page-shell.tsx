@@ -1,8 +1,37 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
-import { WatchPlayer } from "./watch-player";
+const WatchPlayer = dynamic(
+  () => import("./watch-player").then((mod) => mod.WatchPlayer),
+  {
+    ssr: false,
+    loading: () => (
+      <main className="flex min-h-screen items-center justify-center bg-[#090909] px-6">
+        <div className="w-full max-w-md">
+          <div className="h-2 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full w-2/3 rounded-full bg-white"
+              style={{ animation: "shinobi-player-loading 1.2s ease-in-out infinite" }}
+            />
+          </div>
+          <h1 className="mt-6 text-center text-2xl font-semibold text-white">Loading player</h1>
+          <p className="mt-4 text-center text-sm text-white/60">
+            Preparing player controls and media overlays.
+          </p>
+          <style>{`
+            @keyframes shinobi-player-loading {
+              0% { transform: translateX(-30%); opacity: 0.5; }
+              50% { transform: translateX(20%); opacity: 1; }
+              100% { transform: translateX(70%); opacity: 0.5; }
+            }
+          `}</style>
+        </div>
+      </main>
+    ),
+  },
+);
 
 type SubtitleTrack = {
   index: number;
@@ -10,15 +39,18 @@ type SubtitleTrack = {
   src: string;
   language?: string;
   default?: boolean;
+  format?: "text" | "pgs" | "ass";
 };
 
 type InspectableStream = {
   streamIndex: number;
-  kind: "subtitle" | "audio";
+  kind: "subtitle" | "audio" | "video";
   codecName?: string;
   codecLongName?: string;
   language?: string;
   label?: string;
+  pixelFormat?: string;
+  profile?: string;
 };
 
 type WatchPageShellProps = {
@@ -43,6 +75,10 @@ type WatchPageShellProps = {
 type InspectResponse = {
   ok: boolean;
   streams?: InspectableStream[];
+  cachedArtifacts?: {
+    subtitles: Record<number, string>;
+    audio: Record<number, string>;
+  };
   error?: string;
 };
 
@@ -74,6 +110,37 @@ type DemuxStatus = {
   state: "idle" | "running" | "completed" | "failed";
   message: string;
 };
+
+type WatchSessionResponse = {
+  ok: boolean;
+  session?: {
+    magnetLink?: string;
+  };
+  error?: string;
+};
+
+function sendClientDebug(scope: string, message: string, details: Record<string, unknown> = {}) {
+  try {
+    void fetch("/api/debug/client-log", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scope, message, details }),
+      keepalive: true,
+    });
+  } catch {}
+}
+
+function isPgsSubtitleCodec(codecName?: string): boolean {
+  const codec = codecName?.toLowerCase();
+  return codec === "hdmv_pgs_subtitle";
+}
+
+function isAssSubtitleCodec(codecName?: string): boolean {
+  const codec = codecName?.toLowerCase();
+  return codec === "ass" || codec === "ssa" || codec === "substation alpha";
+}
 
 function formatStreamLabel(stream: InspectableStream): string {
   const parts = [
@@ -115,6 +182,19 @@ export function WatchPageShell({
   const [subtitleLoadingLabel, setSubtitleLoadingLabel] = useState<string | null>(null);
   const [activeAudioTrackId, setActiveAudioTrackId] = useState<number | null>(null);
   const [audioLoadingLabel, setAudioLoadingLabel] = useState<string | null>(null);
+  const [audioLoadingMode, setAudioLoadingMode] = useState<"extract" | "transcode" | null>(null);
+  const [resolvedMagnetLink, setResolvedMagnetLink] = useState<string | undefined>(magnetLink);
+
+  useEffect(() => {
+    sendClientDebug("watch-page-shell", "mount", {
+      sessionKey,
+      torrentHash,
+      fileIndex,
+      subtitleCount: subtitles.length,
+      hasDemuxRequest: Boolean(demuxRequest),
+      hasInitialMagnetLink: Boolean(magnetLink),
+    });
+  }, [demuxRequest, fileIndex, magnetLink, sessionKey, subtitles.length, torrentHash]);
 
   const availableSubtitleStreams = useMemo(
     () => availableStreams.filter((stream) => stream.kind === "subtitle"),
@@ -126,7 +206,12 @@ export function WatchPageShell({
   );
   const backendSubtitleOptions = useMemo(
     () =>
-      availableSubtitleStreams.map((stream) => {
+      availableSubtitleStreams
+        .filter(
+          (stream) =>
+            !backendSubtitles.some((subtitle) => subtitle.index === 200_000 + stream.streamIndex),
+        )
+        .map((stream) => {
         const status = streamStatus(stream.streamIndex, subtitleStatuses);
         return {
           id: stream.streamIndex,
@@ -135,20 +220,22 @@ export function WatchPageShell({
           state: status?.state ?? "idle",
         } as const;
       }),
-    [availableSubtitleStreams, subtitleStatuses],
+    [availableSubtitleStreams, backendSubtitles, subtitleStatuses],
   );
   const backendAudioOptions = useMemo(
     () =>
-      availableAudioStreams.map((stream) => {
-        const status = streamStatus(stream.streamIndex, audioStatuses);
-        return {
-          id: stream.streamIndex,
-          label: formatStreamLabel(stream),
-          language: stream.language,
-          state: status?.state ?? "idle",
-        } as const;
-      }),
-    [availableAudioStreams, audioStatuses],
+      availableAudioStreams
+        .filter((stream) => !audioArtifacts[stream.streamIndex])
+        .map((stream) => {
+          const status = streamStatus(stream.streamIndex, audioStatuses);
+          return {
+            id: stream.streamIndex,
+            label: formatStreamLabel(stream),
+            language: stream.language,
+            state: status?.state ?? "idle",
+          } as const;
+        }),
+    [availableAudioStreams, audioArtifacts, audioStatuses],
   );
   const externalAudioTracks = useMemo(
     () =>
@@ -166,18 +253,70 @@ export function WatchPageShell({
   useEffect(() => {
     let cancelled = false;
 
-    async function loadStreams() {
-      if (!demuxRequest) {
+    if (!sessionKey || magnetLink) {
+      setResolvedMagnetLink(magnetLink);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function loadSession() {
+      const resolvedSessionKey = sessionKey!;
+      sendClientDebug("watch-page-shell", "load-session-start", {
+        sessionKey: resolvedSessionKey,
+      });
+      const response = await fetch(`/api/media-backend/watch-sessions/${encodeURIComponent(resolvedSessionKey)}`, {
+        cache: "no-store",
+      });
+
+      const payload = (await response.json()) as WatchSessionResponse;
+
+      if (cancelled || !response.ok || !payload.ok) {
+        sendClientDebug("watch-page-shell", "load-session-skip", {
+          sessionKey: resolvedSessionKey,
+          cancelled,
+          responseOk: response.ok,
+          payloadOk: payload.ok,
+          error: payload.error,
+        });
         return;
       }
 
+      sendClientDebug("watch-page-shell", "load-session-success", {
+        sessionKey: resolvedSessionKey,
+        hasMagnetLink: Boolean(payload.session?.magnetLink),
+      });
+      setResolvedMagnetLink(payload.session?.magnetLink);
+    }
+
+    void loadSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [magnetLink, sessionKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!demuxRequest) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const requestConfig = demuxRequest;
+
+    async function loadStreams() {
       const response = await fetch("/api/media-backend/inspect", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sourceUrl: demuxRequest.sourceUrl,
+          sourceUrl: requestConfig.sourceUrl,
+          torrentHash: requestConfig.torrentHash,
+          fileIndex: requestConfig.fileIndex,
         }),
       });
 
@@ -192,6 +331,26 @@ export function WatchPageShell({
       }
 
       setAvailableStreams(payload.streams ?? []);
+      setAudioArtifacts(payload.cachedArtifacts?.audio ?? {});
+      setBackendSubtitles(
+        (payload.streams ?? [])
+          .filter(
+            (stream) =>
+              stream.kind === "subtitle" &&
+              Boolean(payload.cachedArtifacts?.subtitles?.[stream.streamIndex]),
+          )
+          .map((stream) => ({
+            index: 200_000 + stream.streamIndex,
+            label: formatStreamLabel(stream),
+            src: payload.cachedArtifacts?.subtitles?.[stream.streamIndex] as string,
+            language: stream.language,
+            format: isPgsSubtitleCodec(stream.codecName)
+              ? "pgs"
+              : isAssSubtitleCodec(stream.codecName)
+                ? "ass"
+                : "text",
+          })),
+      );
     }
 
     void loadStreams();
@@ -206,6 +365,36 @@ export function WatchPageShell({
       return;
     }
 
+    const cachedSubtitle = kind === "subtitle" ? backendSubtitles.find((entry) => entry.index === 200_000 + stream.streamIndex) : null;
+    const cachedAudio = kind === "audio" ? audioArtifacts[stream.streamIndex] : null;
+
+    if (cachedSubtitle) {
+      setActiveSubtitleLabel(cachedSubtitle.label);
+      setSubtitleLoadingLabel(null);
+      setSubtitleStatuses((current) => ({
+        ...current,
+        [stream.streamIndex]: {
+          state: "completed",
+          message: "Subtitle ready.",
+        },
+      }));
+      return;
+    }
+
+    if (cachedAudio) {
+      setActiveAudioTrackId(stream.streamIndex);
+      setAudioLoadingLabel(null);
+      setAudioLoadingMode(null);
+      setAudioStatuses((current) => ({
+        ...current,
+        [stream.streamIndex]: {
+          state: "completed",
+          message: "Audio ready.",
+        },
+      }));
+      return;
+    }
+
     const setStatus = kind === "subtitle" ? setSubtitleStatuses : setAudioStatuses;
     if (kind === "subtitle") {
       setActiveSubtitleLabel(formatStreamLabel(stream));
@@ -214,6 +403,7 @@ export function WatchPageShell({
     if (kind === "audio") {
       setActiveAudioTrackId(stream.streamIndex);
       setAudioLoadingLabel(formatStreamLabel(stream));
+      setAudioLoadingMode(stream.codecName === "eac3" ? "transcode" : "extract");
     }
     setStatus((current) => ({
       ...current,
@@ -293,6 +483,11 @@ export function WatchPageShell({
                 label: formatStreamLabel(stream),
                 src: firstSubtitle,
                 language: stream.language,
+                format: isPgsSubtitleCodec(stream.codecName)
+                  ? "pgs"
+                  : isAssSubtitleCodec(stream.codecName)
+                    ? "ass"
+                    : "text",
               });
               return next;
             });
@@ -309,6 +504,7 @@ export function WatchPageShell({
             }));
           }
           setAudioLoadingLabel(null);
+          setAudioLoadingMode(null);
         }
 
         setStatus((current) => ({
@@ -327,6 +523,7 @@ export function WatchPageShell({
         }
         if (kind === "audio") {
           setAudioLoadingLabel(null);
+          setAudioLoadingMode(null);
         }
         setStatus((current) => ({
           ...current,
@@ -359,6 +556,11 @@ export function WatchPageShell({
     void startDemux("subtitle", stream);
   }
 
+  function handleDisableSubtitle() {
+    setActiveSubtitleLabel(null);
+    setSubtitleLoadingLabel(null);
+  }
+
   function handleExtractAudio(streamIndex: number) {
     if (audioArtifacts[streamIndex]) {
       setActiveAudioTrackId(streamIndex);
@@ -382,13 +584,14 @@ export function WatchPageShell({
         posterUrl={posterUrl}
         episodeNumber={episodeNumber}
         episodeTotal={episodeTotal}
-        magnetLink={magnetLink}
+        magnetLink={resolvedMagnetLink}
         torrentHash={torrentHash}
         fileIndex={fileIndex}
         subtitles={[...subtitles, ...backendSubtitles]}
         backendSubtitleOptions={backendSubtitleOptions}
         backendAudioOptions={backendAudioOptions}
         onExtractSubtitle={handleExtractSubtitle}
+        onDisableSubtitle={handleDisableSubtitle}
         onExtractAudio={handleExtractAudio}
         preferredSubtitleLabel={activeSubtitleLabel}
         subtitleLoadingLabel={subtitleLoadingLabel}
@@ -396,6 +599,7 @@ export function WatchPageShell({
         selectedExternalAudioId={activeAudioTrackId}
         onSelectExternalAudio={setActiveAudioTrackId}
         audioLoadingLabel={audioLoadingLabel}
+        audioLoadingMode={audioLoadingMode}
       />
     </>
   );

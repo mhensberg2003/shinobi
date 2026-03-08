@@ -1,5 +1,20 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Seedbox Setup
+
+This repo now uses qBittorrent's Web API for torrent control. Preferred environment variables are:
+
+```bash
+SEEDBOX_API_URL=
+SEEDBOX_API_USER=
+SEEDBOX_API_PASSWORD=
+SEEDBOX_HTTP_BASE_URL=
+```
+
+Legacy `SEEDBOX_RPC_*` variables are still accepted as migration aliases.
+
+Feral-specific notes live in [docs/feral-migration.md](/home/malth/projects/shinobi/docs/feral-migration.md).
+
 ## Getting Started
 
 First, run the development server:

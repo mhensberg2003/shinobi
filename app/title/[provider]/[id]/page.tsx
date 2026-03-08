@@ -28,6 +28,7 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
     detail.kind === "anime" ? catalog.anime.slice(0, 10)
     : detail.kind === "show" ? catalog.shows.slice(0, 10)
     : catalog.movies.slice(0, 10);
+  const alternateTitles = detail.kind === "anime" && detail.subtitle ? [detail.subtitle] : [];
 
   return (
     <main className="relative min-h-screen">
@@ -79,8 +80,14 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
             <div className="mt-5">
               <PlayButton
                 label={detail.kind === "movie" ? "Play" : "Play"}
+                title={detail.title}
+                alternateTitles={alternateTitles}
+                provider={provider}
+                mediaId={id}
+                kind={detail.kind}
                 episodeHint={detail.title}
                 posterUrl={detail.posterUrl}
+                year={detail.year}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", color: "#000", border: "none", borderRadius: 6, padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
               />
             </div>
@@ -98,8 +105,14 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
                   <span className="flex-1 text-sm text-white">{ep.title}</span>
                   <PlayButton
                     label="Play"
+                    title={detail.title}
+                    alternateTitles={alternateTitles}
+                    provider={provider}
+                    mediaId={id}
+                    kind={detail.kind}
                     episodeHint={`${detail.title} · Episode ${ep.number}${ep.title !== `Episode ${ep.number}` ? ` — ${ep.title}` : ""}`}
                     posterUrl={detail.posterUrl}
+                    year={detail.year}
                     episodeNumber={ep.number}
                     episodeTotal={detail.episodes?.length}
                     style={{ flexShrink: 0, background: "rgba(255,255,255,0.08)", color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 500, cursor: "pointer" }}

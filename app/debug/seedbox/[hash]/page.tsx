@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { getSeedboxSnapshot, getTorrentDetails } from "@/lib/seedbox/rtorrent";
+import { getSeedboxSnapshot, getTorrentDetails } from "@/lib/seedbox/client";
 import { SelectFileButton } from "./select-file-button";
 
 type PageProps = {
@@ -31,12 +31,16 @@ export const dynamic = "force-dynamic";
 export default async function TorrentDetailPage({ params, searchParams }: PageProps) {
   const [{ hash }, { file }] = await Promise.all([params, searchParams]);
   const snapshot = await getSeedboxSnapshot();
+  const normalizedHash = hash.trim().toLowerCase();
+  const matchedTorrent = snapshot.torrents.find(
+    (torrent) => torrent.hash.trim().toLowerCase() === normalizedHash,
+  );
 
-  if (!snapshot.torrents.some((torrent) => torrent.hash === hash)) {
+  if (!matchedTorrent) {
     notFound();
   }
 
-  const torrent = await getTorrentDetails(hash);
+  const torrent = await getTorrentDetails(matchedTorrent.hash);
   const selectedIndex = Number(file ?? "");
   const selectedFile = Number.isInteger(selectedIndex)
     ? torrent.files.find((entry) => entry.index === selectedIndex)

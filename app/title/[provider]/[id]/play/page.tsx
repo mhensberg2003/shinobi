@@ -30,6 +30,12 @@ export default async function TitlePlayPage({ params, searchParams }: PageProps)
     notFound();
   }
 
+  const alternateTitles = detail.kind === "anime" && detail.subtitle ? [detail.subtitle] : [];
+  const matchedEpisodeNumber =
+    episode
+      ? Number(episode.match(/\d+/)?.[0] ?? "")
+      : undefined;
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-5xl px-4 py-8 sm:px-6">
       <div className="flex flex-col gap-6">
@@ -46,17 +52,22 @@ export default async function TitlePlayPage({ params, searchParams }: PageProps)
             {episode ? ` · ${episode}` : ""}
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">
-            The flow here is strict: choose what you want to watch, add the magnet, choose the
-            exact file inside that torrent, then open the player.
+            The flow here is automatic: Shinobi will search Nyaa, choose a release, pick the
+            matching file, and open the player.
           </p>
         </section>
 
         <PlayIntake
+          title={detail.title}
+          alternateTitles={alternateTitles}
           provider={provider}
           mediaId={id}
-          kind={kind}
-          title={detail.title}
+          kind={detail.kind}
+          posterUrl={detail.posterUrl}
+          year={detail.year}
           episode={episode}
+          episodeNumber={Number.isInteger(matchedEpisodeNumber) ? matchedEpisodeNumber : undefined}
+          episodeTotal={detail.episodes?.length}
         />
       </div>
     </main>

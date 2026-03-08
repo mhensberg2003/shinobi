@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { getMediaBackendConfig } from "@/lib/media-backend/config";
 import { inspectMediaSource } from "@/lib/media-backend/client";
 
+function toArtifactProxyUrl(url: string): string {
+  const token = Buffer.from(url).toString("base64url");
+  return `/api/media-backend/artifact?url=${encodeURIComponent(token)}`;
+}
+
 export async function POST(request: Request) {
   if (!getMediaBackendConfig()) {
     return NextResponse.json(
@@ -14,6 +19,8 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       sourceUrl?: string;
+      torrentHash?: string;
+      fileIndex?: number;
     };
 
     if (!body.sourceUrl) {
@@ -23,11 +30,30 @@ export async function POST(request: Request) {
       );
     }
 
-    const streams = await inspectMediaSource(body.sourceUrl);
+    const result = await inspectMediaSource({
+      sourceUrl: body.sourceUrl,
+      torrentHash: body.torrentHash,
+      fileIndex: body.fileIndex,
+    });
 
     return NextResponse.json({
       ok: true,
-      streams,
+      streams: result.streams,
+      cachedArtifacts: {
+        subtitles: Object.fromEntries(
+          Object.entries(result.cachedArtifacts.subtitles).map(([streamIndex, url]) => [
+            streamIndex,
+            toArtifactProxyUrl(url),
+          ]),
+        ),
+        audio: Object.fromEntries(
+          Object.entries(result.cachedArtifacts.audio).map(([streamIndex, url]) => [
+            streamIndex,
+            toArtifactProxyUrl(url),
+          ]),
+        ),
+      },
+      playback: result.playback,
     });
   } catch (error) {
     return NextResponse.json(

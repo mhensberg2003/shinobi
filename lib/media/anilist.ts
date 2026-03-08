@@ -99,6 +99,20 @@ function stripHtml(description?: string): string | undefined {
   return description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function extractEpisodeNumber(title?: string): number | null {
+  if (!title) {
+    return null;
+  }
+
+  const match = title.match(/\bepisode\s+(\d+)\b/i) ?? title.match(/\bep\.?\s*(\d+)\b/i);
+  if (!match) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function mapSearchItem(media: AniListSearchResponse["Page"]["media"][number]): MediaSearchItem {
   return {
     id: String(media.id),
@@ -228,14 +242,31 @@ export async function getAnimeDetail(id: string): Promise<MediaDetail> {
   const media = data.Media;
   const title = getAniListTitle(media.title);
   const episodeCount = media.episodes ?? 0;
-  const streamingEps = (media.streamingEpisodes ?? [])
+  const rawStreamingEpisodes = (media.streamingEpisodes ?? [])
     .filter((e) => e.title)
     .map((episode, index) => ({
-      id: `${media.id}-${index + 1}`,
-      number: index + 1,
+      originalIndex: index,
+      explicitNumber: extractEpisodeNumber(episode.title),
       title: episode.title!,
       imageUrl: episode.thumbnail,
     }));
+  const hasExplicitNumbers =
+    rawStreamingEpisodes.length > 0 &&
+    rawStreamingEpisodes.every((episode) => episode.explicitNumber !== null);
+  const orderedStreamingEpisodes =
+    hasExplicitNumbers
+      ? [...rawStreamingEpisodes].sort(
+          (left, right) =>
+            (left.explicitNumber ?? Number.MAX_SAFE_INTEGER) -
+            (right.explicitNumber ?? Number.MAX_SAFE_INTEGER),
+        )
+      : rawStreamingEpisodes;
+  const streamingEps = orderedStreamingEpisodes.map((episode, index) => ({
+    id: `${media.id}-${episode.explicitNumber ?? index + 1}-${episode.originalIndex}`,
+    number: episode.explicitNumber ?? index + 1,
+    title: episode.title,
+    imageUrl: episode.imageUrl,
+  }));
   // prefer streaming episode data if available; otherwise generate from episode count
   const episodes: MediaEpisode[] = streamingEps.length > 0
     ? streamingEps

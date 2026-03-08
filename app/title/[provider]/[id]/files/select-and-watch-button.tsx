@@ -1,5 +1,6 @@
 "use client";
 
+import { waitForStreamReadiness, type StreamPreparationStatus } from "@/lib/seedbox/stream-status-client";
 import { useRouter } from "next/navigation";
 import { startTransition, useState } from "react";
 
@@ -23,6 +24,7 @@ export function SelectAndWatchButton({
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preparingStatus, setPreparingStatus] = useState<StreamPreparationStatus | null>(null);
 
   async function handleClick() {
     setPending(true);
@@ -49,6 +51,22 @@ export function SelectAndWatchButton({
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Failed to select file.");
       }
+
+      setPreparingStatus({
+        hash,
+        fileIndex,
+        ready: false,
+        progress: 0,
+        downloadedBytes: 0,
+        requiredBytes: 1,
+        message: "Starting download...",
+      });
+
+      await waitForStreamReadiness({
+        hash,
+        fileIndex,
+        onUpdate: setPreparingStatus,
+      });
 
       await fetch("/api/media-backend/watch-sessions/heartbeat", {
         method: "POST",
@@ -95,6 +113,15 @@ export function SelectAndWatchButton({
     }
   }
 
+  const preparingPct = preparingStatus
+    ? Math.max(
+        preparingStatus.progress,
+        preparingStatus.requiredBytes > 0
+          ? Math.min(99, Math.round((preparingStatus.downloadedBytes / preparingStatus.requiredBytes) * 100))
+          : preparingStatus.progress,
+      )
+    : 0;
+
   return (
     <div className="flex flex-col gap-2">
       <button
@@ -105,6 +132,19 @@ export function SelectAndWatchButton({
       >
         {pending ? "Preparing stream..." : "Play this file"}
       </button>
+      {pending && preparingStatus ? (
+        <>
+          <div className="h-2 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-sky-300 transition-[width] duration-300"
+              style={{ width: `${preparingPct}%` }}
+            />
+          </div>
+          <p className="text-xs text-[var(--muted)]">
+            {preparingStatus.message} {preparingPct}%
+          </p>
+        </>
+      ) : null}
       {error ? <p className="text-xs text-rose-200">{error}</p> : null}
     </div>
   );

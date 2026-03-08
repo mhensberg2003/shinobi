@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { getSeedboxConfig } from "@/lib/seedbox/config";
-import { getSeedboxSnapshot } from "@/lib/seedbox/rtorrent";
+import { getSeedboxSnapshot } from "@/lib/seedbox/client";
 import { MagnetForm } from "./magnet-form";
 
 function formatBytes(bytes: number): string {
@@ -29,7 +29,7 @@ export default async function SeedboxDebugPage() {
           <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">Seedbox debug</p>
           <h1 className="mt-3 font-display text-3xl text-white">Missing configuration</h1>
           <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--muted)]">
-            Add `SEEDBOX_RPC_URL`, `SEEDBOX_RPC_USER`, and `SEEDBOX_RPC_PASSWORD`
+            Add `SEEDBOX_API_URL`, `SEEDBOX_API_USER`, and `SEEDBOX_API_PASSWORD`
             to your local environment file. The example keys are documented in
             `.env.example`.
           </p>
@@ -55,11 +55,11 @@ export default async function SeedboxDebugPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">Seedbox debug</p>
-              <h1 className="mt-2 font-display text-4xl text-white">Live rTorrent snapshot</h1>
+              <h1 className="mt-2 font-display text-4xl text-white">Live qBittorrent snapshot</h1>
             </div>
             <div className="text-sm text-[var(--muted)]">
               <p>Client version: {snapshot.clientVersion}</p>
-              <p>RPC host: {new URL(config.rpcUrl).host}</p>
+              <p>API host: {new URL(config.apiUrl).host}</p>
             </div>
           </div>
         </section>
