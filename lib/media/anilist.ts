@@ -242,39 +242,62 @@ export async function getAnimeDetail(id: string): Promise<MediaDetail> {
   const media = data.Media;
   const title = getAniListTitle(media.title);
   const episodeCount = media.episodes ?? 0;
+
   const rawStreamingEpisodes = (media.streamingEpisodes ?? [])
-    .filter((e) => e.title)
     .map((episode, index) => ({
       originalIndex: index,
       explicitNumber: extractEpisodeNumber(episode.title),
-      title: episode.title!,
+      title: episode.title,
       imageUrl: episode.thumbnail,
     }));
+
   const hasExplicitNumbers =
     rawStreamingEpisodes.length > 0 &&
     rawStreamingEpisodes.every((episode) => episode.explicitNumber !== null);
+
   const orderedStreamingEpisodes =
     hasExplicitNumbers
       ? [...rawStreamingEpisodes].sort(
-          (left, right) =>
-            (left.explicitNumber ?? Number.MAX_SAFE_INTEGER) -
-            (right.explicitNumber ?? Number.MAX_SAFE_INTEGER),
+          (left, right) => {
+            const leftNum = left.explicitNumber ?? Number.MAX_SAFE_INTEGER;
+            const rightNum = right.explicitNumber ?? Number.MAX_SAFE_INTEGER;
+            return leftNum - rightNum;
+          },
         )
       : rawStreamingEpisodes;
-  const streamingEps = orderedStreamingEpisodes.map((episode, index) => ({
-    id: `${media.id}-${episode.explicitNumber ?? index + 1}-${episode.originalIndex}`,
-    number: episode.explicitNumber ?? index + 1,
-    title: episode.title,
-    imageUrl: episode.imageUrl,
-  }));
-  // prefer streaming episode data if available; otherwise generate from episode count
-  const episodes: MediaEpisode[] = streamingEps.length > 0
-    ? streamingEps
-    : Array.from({ length: episodeCount }, (_, index) => ({
-        id: `${media.id}-${index + 1}`,
-        number: index + 1,
-        title: `Episode ${index + 1}`,
-      }));
+
+  const streamingEpsMap = new Map(
+    orderedStreamingEpisodes.map((episode) => [
+      episode.explicitNumber,
+      {
+        title: episode.title,
+        imageUrl: episode.imageUrl,
+      },
+    ]),
+  );
+
+  const episodes: MediaEpisode[] = Array.from({ length: episodeCount }, (_, index) => {
+    const epNumber = index + 1;
+    const streamingData = streamingEpsMap.get(epNumber);
+    return {
+      id: `${media.id}-${epNumber}`,
+      number: epNumber,
+      title: streamingData?.title ?? `Episode ${epNumber}`,
+      imageUrl: streamingData?.imageUrl,
+    };
+  });
+
+  if (orderedStreamingEpisodes.some((ep) => ep.explicitNumber === 0)) {
+    const ep0Data = orderedStreamingEpisodes.find((ep) => ep.explicitNumber === 0);
+    if (ep0Data) {
+      episodes.unshift({
+        id: `${media.id}-0`,
+        number: 0,
+        title: ep0Data.title ?? `Episode 0`,
+        imageUrl: ep0Data.imageUrl,
+      });
+    }
+  }
 
   return {
     id: String(media.id),
