@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type MpvPlayerProps = {
@@ -42,7 +42,6 @@ export function MpvPlayer({
   const router = useRouter();
   const [status, setStatus] = useState<"launching" | "playing" | "ended" | "error">("launching");
   const [errorMsg, setErrorMsg] = useState("");
-  const spawnedRef = useRef(false);
 
   const saved = readProgress(storageKey);
   const hasResumePoint = Boolean(saved?.currentTime && saved.currentTime > 5);
@@ -54,25 +53,27 @@ export function MpvPlayer({
 
   useEffect(() => {
     const mpv = window.electronAPI?.mpv;
-    if (!mpv || spawnedRef.current) return;
-    spawnedRef.current = true;
+    if (!mpv) return;
 
     const startTime = hasResumePoint ? saved!.currentTime : undefined;
 
+    let active = true;
+
     mpv.spawn(streamUrl, { startTime })
-      .then(() => setStatus("playing"))
+      .then(() => { if (active) setStatus("playing"); })
       .catch((err) => {
+        if (!active) return;
         setStatus("error");
         setErrorMsg(err instanceof Error ? err.message : String(err));
       });
 
     const unsubEnded = mpv.onEnded(() => {
-      setStatus("ended");
+      if (active) setStatus("ended");
     });
 
     return () => {
+      active = false;
       unsubEnded();
-      mpv.quit().catch(() => {});
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamUrl]);

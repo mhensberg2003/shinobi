@@ -99,13 +99,13 @@ function createWindow() {
 function registerIpc() {
   ipcMain.handle("mpv:spawn", (_event, options: { streamUrl: string; startTime?: number }) => {
     console.log("[mpv] spawn requested, url:", options.streamUrl?.slice(0, 80));
-    console.log("[mpv] mpvPath:", mpvPath);
 
-    // Kill existing mpv if running
+    // Kill existing mpv if running — don't notify renderer
     if (mpvProcess) {
-      console.log("[mpv] killing existing process");
-      try { mpvProcess.kill(); } catch {}
+      const old = mpvProcess;
       mpvProcess = null;
+      old.removeAllListeners("exit");
+      try { old.kill(); } catch {}
     }
 
     const args = [
