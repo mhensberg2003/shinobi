@@ -1,22 +1,10 @@
 import type { Metadata } from "next";
-import { Manrope, Syne, Geist } from "next/font/google";
+import { Geist } from "next/font/google";
 import { Nav } from "@/components/nav";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
-
-const manrope = Manrope({
-  variable: "--font-manrope",
-  subsets: ["latin"],
-});
-
-const syne = Syne({
-  variable: "--font-syne",
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
+const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
   title: "Shinobi",
@@ -35,11 +23,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={cn("font-sans", geist.variable)}>
-      <body className={`${manrope.variable} ${syne.variable} h-screen overflow-hidden antialiased`}>
+      <body className="h-screen overflow-hidden antialiased">
         <Nav />
-        <ScrollArea className="h-screen">
+        <div data-scroll-root className="h-screen overflow-auto" style={{ scrollbarWidth: "none" }}>
           {children}
-        </ScrollArea>
+        </div>
       </body>
     </html>
   );

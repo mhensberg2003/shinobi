@@ -31,6 +31,7 @@ export default async function TitlePlayPage({ params, searchParams }: PageProps)
   }
 
   const alternateTitles = detail.kind === "anime" && detail.subtitle ? [detail.subtitle] : [];
+  const anilistId = detail.anilistId;
   const matchedEpisodeNumber =
     episode
       ? Number(episode.match(/\d+/)?.[0] ?? "")
@@ -60,9 +61,10 @@ export default async function TitlePlayPage({ params, searchParams }: PageProps)
         <PlayIntake
           title={detail.title}
           alternateTitles={alternateTitles}
-          provider={provider}
+          provider={"tmdb"}
           mediaId={id}
           kind={detail.kind}
+          anilistId={anilistId}
           posterUrl={detail.posterUrl}
           year={detail.year}
           episode={episode}

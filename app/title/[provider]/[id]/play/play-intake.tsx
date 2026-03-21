@@ -9,6 +9,7 @@ export function PlayIntake({
   provider,
   mediaId,
   kind,
+  anilistId,
   posterUrl,
   year,
   episode,
@@ -20,6 +21,7 @@ export function PlayIntake({
   provider: "anilist" | "tmdb";
   mediaId: string;
   kind: "anime" | "movie" | "show";
+  anilistId?: string;
   posterUrl?: string;
   year?: number;
   episode?: string;
@@ -55,6 +57,9 @@ export function PlayIntake({
     }
     if (episodeTotal != null) {
       params.set("eps", String(episodeTotal));
+    }
+    if (anilistId) {
+      params.set("anilistId", anilistId);
     }
 
     startTransition(() => {

@@ -1,6 +1,5 @@
 "use client";
 
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
 
@@ -89,43 +88,37 @@ export function ContinueWatchingRow() {
   if (!items.length) return null;
 
   return (
-    <section style={{ marginBottom: 32 }}>
-      <h2 style={{ fontSize: 15, fontWeight: 600, color: "#fff", marginBottom: 12 }}>Continue Watching</h2>
-      <ScrollArea className="w-full whitespace-nowrap pb-2">
-        <div style={{ display: "flex", gap: 10, width: "max-content", paddingBottom: 4 }}>
-          {items.map((item) => {
-            const pct = item.duration > 0 ? Math.min(100, (item.currentTime / item.duration) * 100) : 0;
-            const href = item.sessionKey
-              ? `/watch/resume/${encodeURIComponent(item.sessionKey)}`
-              : `/watch/${item.hash}?file=${item.fileIndex}`;
-            return (
-              <Link
-                key={item.key}
-                href={href}
-                className="cw-card"
-                style={{ display: "block", width: 260, minWidth: 260, flexShrink: 0 }}
-              >
-                <div style={{ position: "relative", width: 260, height: 146, borderRadius: 10, overflow: "hidden", background: "#1e1e1e" }}>
-                  {item.posterUrl && (
-                    <img src={item.posterUrl} alt={item.title} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-                  )}
-                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 55%)", zIndex: 1 }} />
-                  {item.episodeNumber != null && (
-                    <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2, background: "rgba(0,0,0,0.65)", borderRadius: 4, padding: "2px 7px", fontSize: 11, fontWeight: 600, color: "#fff" }}>
-                      {item.episodeTotal != null ? `${item.episodeNumber}/${item.episodeTotal}` : `Ep ${item.episodeNumber}`}
-                    </div>
-                  )}
-                  <p style={{ position: "absolute", bottom: 18, left: 10, right: 10, zIndex: 2, fontSize: 12, fontWeight: 500, color: "#fff", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{item.title}</p>
-                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.15)", zIndex: 2 }}>
-                    <div style={{ height: "100%", width: `${pct}%`, background: "#e50914" }} />
+    <section className="mb-8">
+      <h2 className="text-[15px] font-semibold text-white mb-3">Continue Watching</h2>
+      <div className="scroll-row">
+        {items.map((item) => {
+          const pct = item.duration > 0 ? Math.min(100, (item.currentTime / item.duration) * 100) : 0;
+          const href = item.sessionKey
+            ? `/watch/resume/${encodeURIComponent(item.sessionKey)}`
+            : `/watch/${item.hash}?file=${item.fileIndex}`;
+          return (
+            <Link key={item.key} href={href} className="cw-card block shrink-0" style={{ width: 260, minWidth: 260 }}>
+              <div className="relative rounded-[10px] overflow-hidden bg-[#1e1e1e]" style={{ width: 260, height: 146 }}>
+                {item.posterUrl && (
+                  <img src={item.posterUrl} alt={item.title} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+                )}
+                <div className="absolute inset-0 z-[1]" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 55%)" }} />
+                {item.episodeNumber != null && (
+                  <div className="absolute top-2 right-2 z-[2] bg-black/65 rounded px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                    {item.episodeTotal != null ? `${item.episodeNumber}/${item.episodeTotal}` : `Ep ${item.episodeNumber}`}
                   </div>
+                )}
+                <p className="absolute bottom-[18px] left-2.5 right-2.5 z-[2] text-xs font-medium text-white truncate">
+                  {item.title}
+                </p>
+                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/15 z-[2]">
+                  <div className="h-full bg-[#e50914]" style={{ width: `${pct}%` }} />
                 </div>
-              </Link>
-            );
-          })}
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
     </section>
   );
 }

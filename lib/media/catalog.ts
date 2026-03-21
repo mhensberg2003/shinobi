@@ -1,12 +1,12 @@
 import "server-only";
 
-import { getAnimeDetail, getTrendingAnime, searchAnime } from "./anilist";
-import { getTmdbDetail, getTrendingTmdb, searchTmdb } from "./tmdb";
+import { lookupAniListIds } from "./anilist";
+import { getTmdbDetail, getTrendingAnime, getTrendingTmdb, searchTmdb } from "./tmdb";
 import type { MediaDetail, MediaSearchItem } from "./types";
 
 export async function getHomeCatalog() {
   const [anime, shows, movies] = await Promise.all([
-    getTrendingAnime(),
+    getTrendingAnime().catch(() => []),
     getTrendingTmdb("tv").catch(() => []),
     getTrendingTmdb("movie").catch(() => []),
   ]);
@@ -19,8 +19,7 @@ export async function getHomeCatalog() {
 }
 
 export async function searchCatalog(query: string) {
-  const [anime, tmdb] = await Promise.all([searchAnime(query), searchTmdb(query).catch(() => [])]);
-  return [...anime, ...tmdb];
+  return searchTmdb(query).catch(() => []);
 }
 
 export async function getMediaDetail(
@@ -28,13 +27,23 @@ export async function getMediaDetail(
   id: string,
   kind?: "anime" | "movie" | "show",
 ): Promise<MediaDetail> {
-  if (provider === "anilist") {
-    return getAnimeDetail(id);
+  const resolvedKind = kind ?? "movie";
+  const detail = await getTmdbDetail(resolvedKind, id);
+
+  // For anime, map TMDB → AniList via arm so the backend can use the AniList ID for SeaDex.
+  // The arm API returns one AniList ID per season/part — store all of them so the
+  // correct one can be picked based on the selected season at play time.
+  if (detail.kind === "anime") {
+    const anilistIds = await lookupAniListIds(id).catch(() => []);
+    if (anilistIds.length > 0) {
+      detail.anilistId = anilistIds[0];
+      detail.anilistIds = anilistIds;
+    }
   }
 
-  return getTmdbDetail(kind === "show" ? "show" : "movie", id);
+  return detail;
 }
 
 export function getMediaHref(item: Pick<MediaSearchItem, "provider" | "id" | "kind">): string {
-  return `/title/${item.provider}/${item.id}${item.provider === "tmdb" ? `?kind=${item.kind}` : ""}`;
+  return `/title/tmdb/${item.id}?kind=${item.kind}`;
 }

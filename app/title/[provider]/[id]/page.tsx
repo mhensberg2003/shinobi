@@ -44,6 +44,7 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
     : detail.kind === "show" ? catalog.shows.slice(0, 10)
     : catalog.movies.slice(0, 10);
   const alternateTitles = detail.kind === "anime" && detail.subtitle ? [detail.subtitle] : [];
+  const anilistId = detail.anilistId;
   const metaItems = formatMeta(detail);
   const kindLabel = detail.kind === "show" ? "Series" : detail.kind === "anime" ? "Anime" : "Movie";
 
@@ -107,14 +108,16 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
                 label={detail.episodes?.length ? "Play S1 E1" : "Play"}
                 title={detail.title}
                 alternateTitles={alternateTitles}
-                provider={provider}
+                provider={"tmdb"}
                 mediaId={id}
                 kind={detail.kind}
+                anilistId={anilistId}
                 episodeHint={detail.episodes?.length ? `${detail.title} · Episode 1` : detail.title}
                 posterUrl={detail.posterUrl}
                 year={detail.year}
                 episodeNumber={detail.episodes?.length ? 1 : undefined}
                 episodeTotal={detail.episodes?.length}
+                season={detail.seasons?.[0]?.number}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -148,13 +151,16 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
             episodes={detail.episodes}
             title={detail.title}
             alternateTitles={alternateTitles}
-            provider={provider}
+            provider={"tmdb"}
             mediaId={id}
             kind={detail.kind}
+            anilistId={anilistId}
+            anilistIds={detail.anilistIds}
             posterUrl={detail.posterUrl}
             year={detail.year}
             runtimeMinutes={detail.runtimeMinutes}
             seasonLabel={detail.seasonLabel}
+            seasons={detail.seasons}
           />
         )}
 

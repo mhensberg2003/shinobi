@@ -3,18 +3,20 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
-export function PlayButton({ label = "Play", title, alternateTitles, provider, mediaId, kind, posterUrl, year, episodeHint, episodeNumber, episodeTotal, className, style }: {
+export function PlayButton({ label = "Play", title, alternateTitles, provider, mediaId, kind, anilistId, posterUrl, year, episodeHint, episodeNumber, episodeTotal, season, className, style }: {
   label?: string;
   title: string;
   alternateTitles?: string[];
   provider?: "anilist" | "tmdb";
   mediaId?: string;
   kind?: "anime" | "movie" | "show";
+  anilistId?: string;
   episodeHint?: string;
   posterUrl?: string;
   year?: number;
   episodeNumber?: number;
   episodeTotal?: number;
+  season?: number;
   className?: string;
   style?: React.CSSProperties;
 }) {
@@ -62,6 +64,12 @@ export function PlayButton({ label = "Play", title, alternateTitles, provider, m
     }
     if (episodeTotal != null) {
       params.set("eps", String(episodeTotal));
+    }
+    if (anilistId) {
+      params.set("anilistId", anilistId);
+    }
+    if (season != null) {
+      params.set("season", String(season));
     }
 
     router.push(`/watch/start?${params.toString()}`);

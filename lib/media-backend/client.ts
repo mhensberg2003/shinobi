@@ -151,9 +151,11 @@ export async function autoResolveWatch(input: {
   provider?: "anilist" | "tmdb";
   mediaId?: string;
   kind?: "anime" | "movie" | "show";
+  anilistId?: string;
   posterUrl?: string;
   episodeNumber?: number;
   episodeTotal?: number;
+  season?: number;
   year?: number;
 }): Promise<BackendAutoResolvedWatch> {
   return backendFetch<BackendAutoResolvedWatch>("/watch/auto-resolve", {

@@ -25,9 +25,19 @@ export type MediaEpisode = {
   airedAt?: string;
 };
 
+export type MediaSeason = {
+  number: number;
+  name: string;
+  episodeCount: number;
+};
+
 export type MediaDetail = MediaSearchItem & {
   runtimeMinutes?: number;
   status?: string;
   episodes?: MediaEpisode[];
   seasonLabel?: string;
+  numberOfSeasons?: number;
+  seasons?: MediaSeason[];
+  anilistId?: string;
+  anilistIds?: string[];
 };

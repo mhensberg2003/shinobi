@@ -1,0 +1,19 @@
+appId: com.shinobi.desktop
+productName: Shinobi
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+linux:
+  target:
+    - AppImage
+    - deb
+  category: AudioVideo
+mac:
+  target:
+    - dmg
+  category: public.app-category.entertainment
+win:
+  target:
+    - nsis

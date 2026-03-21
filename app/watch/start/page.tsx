@@ -8,11 +8,13 @@ type PageProps = {
     provider?: "anilist" | "tmdb";
     mediaId?: string;
     kind?: "anime" | "movie" | "show";
+    anilistId?: string;
     poster?: string;
     hint?: string;
     year?: string;
     ep?: string;
     eps?: string;
+    season?: string;
   }>;
 };
 
@@ -37,11 +39,13 @@ export default async function WatchStartPage({ searchParams }: PageProps) {
       provider={params.provider}
       mediaId={params.mediaId}
       kind={params.kind}
+      anilistId={params.anilistId}
       posterUrl={params.poster}
       year={params.year ? Number(params.year) : undefined}
       episodeHint={params.hint}
       episodeNumber={params.ep ? Number(params.ep) : undefined}
       episodeTotal={params.eps ? Number(params.eps) : undefined}
+      season={params.season ? Number(params.season) : undefined}
     />
   );
 }

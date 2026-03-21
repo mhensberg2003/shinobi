@@ -12,11 +12,13 @@ type AutoResolveProgressProps = {
   provider?: "anilist" | "tmdb";
   mediaId?: string;
   kind?: "anime" | "movie" | "show";
+  anilistId?: string;
   posterUrl?: string;
   year?: number;
   episodeHint?: string;
   episodeNumber?: number;
   episodeTotal?: number;
+  season?: number;
 };
 
 type TorrentDetailsResponse = {
@@ -116,11 +118,13 @@ export function AutoResolveProgress({
   provider,
   mediaId,
   kind,
+  anilistId,
   posterUrl,
   year,
   episodeHint,
   episodeNumber,
   episodeTotal,
+  season,
 }: AutoResolveProgressProps) {
   const router = useRouter();
   const [startedAt] = useState(() => Date.now());
@@ -197,9 +201,11 @@ export function AutoResolveProgress({
             provider,
             mediaId,
             kind,
+            anilistId,
             posterUrl,
             episodeNumber,
             episodeTotal,
+            season,
             year,
           }),
         });

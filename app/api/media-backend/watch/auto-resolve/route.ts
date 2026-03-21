@@ -19,9 +19,11 @@ export async function POST(request: Request) {
       provider?: "anilist" | "tmdb";
       mediaId?: string;
       kind?: "anime" | "movie" | "show";
+      anilistId?: string;
       posterUrl?: string;
       episodeNumber?: number;
       episodeTotal?: number;
+      season?: number;
       year?: number;
     };
 
@@ -29,16 +31,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "title is required." }, { status: 400 });
     }
 
+    // For anime with an AniList ID, send provider=anilist + the AniList ID
+    // so the backend can use it for SeaDex lookups.
+    const useAnilist = body.kind === "anime" && body.anilistId;
+
     const resolution = await autoResolveWatch({
       requestKey: body.requestKey,
       title: body.title,
       alternateTitles: Array.isArray(body.alternateTitles) ? body.alternateTitles : [],
-      provider: body.provider,
-      mediaId: body.mediaId,
+      provider: useAnilist ? "anilist" : body.provider,
+      mediaId: useAnilist ? body.anilistId : body.mediaId,
       kind: body.kind,
       posterUrl: body.posterUrl,
       episodeNumber: body.episodeNumber,
       episodeTotal: body.episodeTotal,
+      season: body.season,
       year: body.year,
     });
 

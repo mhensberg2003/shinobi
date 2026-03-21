@@ -17,7 +17,7 @@
   --color-background: var(--bg);
   --color-foreground: var(--fg);
   --font-sans: var(--font-sans);
-  --font-display: var(--font-syne);
+  --font-display: var(--font-sans);
   --color-border: var(--border);
   --color-ring: var(--ring);
   --radius-sm: calc(var(--radius) * 0.6);
@@ -31,7 +31,7 @@
 html, body {
   background: var(--bg);
   color: var(--fg);
-  font-family: var(--font-manrope), sans-serif;
+  font-family: var(--font-sans), sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
@@ -57,6 +57,82 @@ a { color: inherit; text-decoration: none; }
 }
 .scroll-row::-webkit-scrollbar { display: none; }
 .scroll-row > * { scroll-snap-align: start; }
+
+/* hero pills */
+.hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.75);
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+/* hero buttons */
+.hero-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  color: #000;
+  border-radius: 8px;
+  padding: 11px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+.hero-btn-primary:hover { opacity: 0.85; }
+
+.hero-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  border-radius: 8px;
+  padding: 11px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: background 0.15s;
+}
+.hero-btn-secondary:hover { background: rgba(255,255,255,0.2); }
+
+/* hero dot nav */
+.hero-dot {
+  height: 7px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+/* hero side arrows */
+.hero-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.35);
+  border: none;
+  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.15s;
+}
+.hero-arrow:hover { background: rgba(0,0,0,0.55); }
+section:hover .hero-arrow { opacity: 1; }
 
 /* player range inputs */
 input[type=range] {
@@ -94,7 +170,7 @@ input[type=range]::-moz-range-thumb {
 video.shinobi-player::cue {
   color: #fff;
   background: transparent;
-  font-family: var(--font-manrope), sans-serif;
+  font-family: var(--font-sans), sans-serif;
   font-size: clamp(20px, 2.35vw, 34px);
   font-weight: 800;
   line-height: 1.05;
