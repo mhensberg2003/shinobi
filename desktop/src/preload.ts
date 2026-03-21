@@ -19,5 +19,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.removeListener("mpv:ended", handler);
       };
     },
+
+    onProgress(callback: (data: { currentTime: number; duration: number }) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: { currentTime: number; duration: number }) => callback(data);
+      ipcRenderer.on("mpv:progress", handler);
+      return () => {
+        ipcRenderer.removeListener("mpv:progress", handler);
+      };
+    },
   },
 });

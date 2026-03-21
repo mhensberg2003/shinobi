@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 
 const DEV_SERVER_URL = "http://localhost:3000";
@@ -8,6 +9,8 @@ const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
 let mpvPath = "mpv";
 let mpvProcess: ReturnType<typeof spawn> | null = null;
+let mpvIpcTimer: ReturnType<typeof setInterval> | null = null;
+let spawnCounter = 0;
 
 function loadConfig(): Record<string, string> {
   try {
@@ -96,10 +99,87 @@ function createWindow() {
   });
 }
 
+function getMpvPipeName(id: number): string {
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\shinobi-mpv-${process.pid}-${id}`;
+  }
+  return `/tmp/shinobi-mpv-${process.pid}-${id}.sock`;
+}
+
+function queryMpvProperty(pipeName: string, property: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const client = net.createConnection(pipeName);
+    let data = "";
+    const timeout = setTimeout(() => {
+      client.destroy();
+      resolve(null);
+    }, 2000);
+
+    client.on("connect", () => {
+      client.write(JSON.stringify({ command: ["get_property", property] }) + "\n");
+    });
+
+    client.on("data", (chunk) => {
+      data += chunk.toString();
+      const lines = data.split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { data?: number; error?: string };
+          if (parsed.error === "success" && typeof parsed.data === "number") {
+            clearTimeout(timeout);
+            client.destroy();
+            resolve(parsed.data);
+            return;
+          }
+        } catch {}
+      }
+    });
+
+    client.on("error", () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+  });
+}
+
+function stopProgressPolling() {
+  if (mpvIpcTimer) {
+    clearInterval(mpvIpcTimer);
+    mpvIpcTimer = null;
+  }
+}
+
+function startProgressPolling(pipeName: string) {
+  stopProgressPolling();
+
+  // Wait a moment for mpv to set up the IPC server
+  setTimeout(() => {
+    mpvIpcTimer = setInterval(async () => {
+      if (!mpvProcess) {
+        stopProgressPolling();
+        return;
+      }
+
+      try {
+        const [currentTime, duration] = await Promise.all([
+          queryMpvProperty(pipeName, "time-pos"),
+          queryMpvProperty(pipeName, "duration"),
+        ]);
+
+        if (currentTime != null && mainWindow) {
+          mainWindow.webContents.send("mpv:progress", {
+            currentTime,
+            duration: duration ?? 0,
+          });
+        }
+      } catch {}
+    }, 5000);
+  }, 2000);
+}
+
 function registerIpc() {
   ipcMain.handle("mpv:spawn", (_event, options: { streamUrl: string; startTime?: number }) => {
-    console.log("[mpv] spawn requested, url:", options.streamUrl?.slice(0, 80));
-
     // Kill existing mpv if running — don't notify renderer
     if (mpvProcess) {
       const old = mpvProcess;
@@ -107,11 +187,16 @@ function registerIpc() {
       old.removeAllListeners("exit");
       try { old.kill(); } catch {}
     }
+    stopProgressPolling();
+
+    spawnCounter++;
+    const pipeName = getMpvPipeName(spawnCounter);
 
     const args = [
       "--no-config",
       "--keep-open=yes",
       "--force-window=yes",
+      `--input-ipc-server=${pipeName}`,
     ];
 
     if (options.startTime && options.startTime > 0) {
@@ -120,40 +205,32 @@ function registerIpc() {
 
     args.push(options.streamUrl);
 
-    console.log("[mpv] spawning:", mpvPath, args);
-
     mpvProcess = spawn(mpvPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
     });
 
-    console.log("[mpv] pid:", mpvProcess.pid ?? "none");
+    mpvProcess.stdout?.on("data", () => {});
+    mpvProcess.stderr?.on("data", () => {});
 
-    mpvProcess.stdout?.on("data", (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg) console.log("[mpv:stdout]", msg);
-    });
-
-    mpvProcess.stderr?.on("data", (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg) console.log("[mpv:stderr]", msg);
-    });
-
-    mpvProcess.on("exit", (code, signal) => {
-      console.log(`[mpv] exited code=${code} signal=${signal}`);
+    mpvProcess.on("exit", () => {
       mpvProcess = null;
+      stopProgressPolling();
       mainWindow?.webContents.send("mpv:ended");
     });
 
-    mpvProcess.on("error", (err) => {
-      console.error("[mpv] spawn error:", err.message);
+    mpvProcess.on("error", () => {
       mpvProcess = null;
+      stopProgressPolling();
     });
+
+    startProgressPolling(pipeName);
 
     return { ok: true };
   });
 
   ipcMain.handle("mpv:quit", () => {
+    stopProgressPolling();
     if (mpvProcess) {
       try { mpvProcess.kill(); } catch {}
       mpvProcess = null;

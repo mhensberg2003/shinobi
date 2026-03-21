@@ -54,6 +54,20 @@ const PHASE_PROGRESS: Record<BackendAutoResolveStatus["phase"], number> = {
   failed: 100,
 };
 
+const PHASE_LABELS: Partial<Record<BackendAutoResolveStatus["phase"], string>> = {
+  queued: "Starting up",
+  searching: "Searching",
+  ranking: "Ranking results",
+  "trying-candidate": "Trying source",
+  "fetching-metadata": "Fetching metadata",
+  "picking-file": "Selecting file",
+  "selecting-file": "Selecting file",
+  "waiting-for-playable": "Buffering",
+  buffering: "Buffering",
+  probing: "Almost ready",
+  finalizing: "Opening player",
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -88,27 +102,6 @@ async function pollAutoResolveStatus(requestKey: string): Promise<BackendAutoRes
   }
 
   return payload.status ?? null;
-}
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getStateHistory(status: BackendAutoResolveStatus | null) {
-  const items: string[] = [];
-
-  if (status?.phase) {
-    items.push(status.message);
-  }
-
-  if (status?.candidate?.title) {
-    items.push(`Candidate: ${status.candidate.title}`);
-  }
-
-  return items.slice(0, 3);
 }
 
 export function AutoResolveProgress({
@@ -382,56 +375,72 @@ export function AutoResolveProgress({
     return Math.min(14, 4 + Math.round((1 - Math.exp(-elapsedMs / 6000)) * 10));
   }, [backendStatus, elapsedMs, error]);
 
-  const titleLabel =
-    error ? "Could not open your stream" : "Preparing your stream";
+  const phaseLabel = backendStatus?.phase
+    ? PHASE_LABELS[backendStatus.phase] ?? null
+    : null;
 
-  const statusLabel =
-    error
-      ? error
-      : backendStatus?.message ?? "Contacting the resolver";
-
-  const history = getStateHistory(backendStatus);
+  const displayTitle = episodeNumber != null
+    ? `${title} \u00b7 Episode ${episodeNumber}`
+    : title;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#090909] px-6">
-      <div className="w-full max-w-md">
-        <div className="h-2 overflow-hidden rounded-full bg-white/10">
-          <div
-            className={`h-full rounded-full transition-[width] duration-500 ${
-              error ? "bg-rose-300" : "bg-white"
-            }`}
-            style={{ width: `${progressValue}%` }}
-          />
-        </div>
+    <main className="fixed inset-0 flex items-center justify-center bg-[#0a0a0a]">
+      {posterUrl ? (
+        <img
+          src={posterUrl}
+          alt=""
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          style={{ opacity: 0.06, filter: "blur(40px) saturate(1.2)" }}
+        />
+      ) : null}
 
-        <div className="mt-5 flex items-center justify-between text-[11px] uppercase tracking-[0.24em] text-white/35">
-          <span>{formatElapsed(elapsedMs)}</span>
-          <span>{progressValue}%</span>
-        </div>
-
-        <h1 className="mt-6 text-center text-2xl font-semibold text-white">{titleLabel}</h1>
-        <p className="mt-4 text-center text-sm text-white/60">{statusLabel}</p>
-
-        {history.length > 0 && !error ? (
-          <div className="mt-5 space-y-2">
-            {history.map((item) => (
-              <p key={item} className="text-center text-xs text-white/35">
-                {item}
-              </p>
-            ))}
+      <div className="relative z-10 flex w-full max-w-sm flex-col items-center px-6">
+        {/* Progress bar */}
+        {!error ? (
+          <div className="w-full">
+            <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/[0.06]">
+              <div
+                className="h-full rounded-full bg-white/70 transition-[width] duration-700 ease-out"
+                style={{ width: `${progressValue}%` }}
+              />
+            </div>
           </div>
         ) : null}
 
+        {/* Phase label */}
+        {!error && phaseLabel ? (
+          <p className="mt-5 text-[13px] font-medium text-white/60">{phaseLabel}</p>
+        ) : !error ? (
+          <div className="mt-5 h-5 w-5 animate-spin rounded-full border-[2px] border-white/10 border-t-white/50" />
+        ) : null}
+
+        {/* Error state */}
         {error ? (
-          <div className="mt-6 flex justify-center">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="rounded-full border border-white/14 bg-white/7 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/12"
-            >
-              Go back
-            </button>
-          </div>
+          <>
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500/10">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </div>
+            <p className="mt-4 text-[13px] text-white/40">{error}</p>
+          </>
+        ) : null}
+
+        {/* Title */}
+        <p className="mt-4 max-w-[300px] truncate text-center text-[12px] text-white/25">
+          {displayTitle}
+        </p>
+
+        {/* Back button on error */}
+        {error ? (
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="mt-6 rounded-full px-5 py-2 text-[13px] font-medium text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white/70"
+          >
+            Go back
+          </button>
         ) : null}
       </div>
     </main>

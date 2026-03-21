@@ -31,8 +31,26 @@ function readProgress(key: string): StoredProgress | null {
   try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
+function writeProgress(key: string, p: Partial<StoredProgress> & { currentTime: number; duration: number }) {
+  try {
+    const existing = readProgress(key);
+    const next: StoredProgress = {
+      title: p.title ?? existing?.title ?? "Untitled",
+      currentTime: p.currentTime,
+      duration: p.duration,
+      updatedAt: new Date().toISOString(),
+      posterUrl: p.posterUrl ?? existing?.posterUrl,
+      episodeNumber: p.episodeNumber ?? existing?.episodeNumber,
+      episodeTotal: p.episodeTotal ?? existing?.episodeTotal,
+      sessionKey: p.sessionKey ?? existing?.sessionKey,
+    };
+    localStorage.setItem(key, JSON.stringify(next));
+  } catch {}
+}
+
 export function MpvPlayer({
   storageKey,
+  sessionKey,
   title,
   streamUrl,
   posterUrl,
@@ -46,17 +64,15 @@ export function MpvPlayer({
   const saved = readProgress(storageKey);
   const hasResumePoint = Boolean(saved?.currentTime && saved.currentTime > 5);
 
-  const displayTitle =
-    episodeNumber != null
-      ? `${title} \u2022 Episode ${episodeNumber}${episodeTotal != null ? `/${episodeTotal}` : ""}`
-      : title;
+  const displayTitle = episodeNumber != null
+    ? `Episode ${episodeNumber}`
+    : null;
 
   useEffect(() => {
     const mpv = window.electronAPI?.mpv;
     if (!mpv) return;
 
     const startTime = hasResumePoint ? saved!.currentTime : undefined;
-
     let active = true;
 
     mpv.spawn(streamUrl, { startTime })
@@ -71,58 +87,88 @@ export function MpvPlayer({
       if (active) setStatus("ended");
     });
 
+    const unsubProgress = mpv.onProgress((data) => {
+      if (!active) return;
+      writeProgress(storageKey, {
+        title,
+        currentTime: data.currentTime,
+        duration: data.duration,
+        posterUrl,
+        episodeNumber,
+        episodeTotal,
+        sessionKey,
+      });
+    });
+
     return () => {
       active = false;
       unsubEnded();
+      unsubProgress();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamUrl]);
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#000", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0a0a0a]">
       {posterUrl ? (
         <img
           src={posterUrl}
           alt=""
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.15, filter: "blur(30px)", pointerEvents: "none" }}
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          style={{ opacity: 0.08, filter: "blur(40px) saturate(1.2)" }}
         />
       ) : null}
 
-      <div style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 480, padding: "0 24px" }}>
+      <div className="relative z-10 flex flex-col items-center px-6">
+        {/* Icon */}
         {status === "launching" ? (
-          <>
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/18 border-t-white" />
-            <p className="mt-5 text-lg font-medium text-white">Opening in mpv</p>
-            <p className="mt-2 text-sm text-white/50">{displayTitle}</p>
-          </>
+          <div className="h-10 w-10 animate-spin rounded-full border-[2.5px] border-white/10 border-t-white/70" />
         ) : status === "playing" ? (
-          <>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="5,3 19,12 5,21" fill="rgba(255,255,255,0.6)" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.06]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white" opacity="0.5">
+              <polygon points="6,4 20,12 6,20" />
             </svg>
-            <p className="mt-5 text-lg font-medium text-white">Playing in mpv</p>
-            <p className="mt-2 text-sm text-white/50">{displayTitle}</p>
-            <p className="mt-6 text-xs text-white/30">Video is playing in a separate mpv window. Close it or press back to return.</p>
-          </>
+          </div>
         ) : status === "ended" ? (
-          <>
-            <p className="text-lg font-medium text-white">Playback ended</p>
-            <p className="mt-2 text-sm text-white/50">{displayTitle}</p>
-          </>
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.06]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.5">
+              <polyline points="5,13 9,17 19,7" />
+            </svg>
+          </div>
         ) : (
-          <>
-            <p className="text-lg font-medium text-red-400">Failed to open mpv</p>
-            <p className="mt-2 text-sm text-white/50">{errorMsg}</p>
-          </>
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </div>
         )}
 
+        {/* Title */}
+        <p className="mt-5 text-[15px] font-medium text-white/90">
+          {status === "launching" ? "Opening in mpv" : status === "playing" ? "Now playing" : status === "ended" ? "Finished" : "Playback failed"}
+        </p>
+
+        {/* Subtitle info */}
+        <p className="mt-1.5 max-w-[320px] truncate text-center text-[13px] text-white/40">
+          {title}{displayTitle ? ` \u00b7 ${displayTitle}` : ""}
+        </p>
+
+        {/* Error detail */}
+        {status === "error" && errorMsg ? (
+          <p className="mt-3 max-w-[360px] text-center text-xs text-white/25">{errorMsg}</p>
+        ) : null}
+
+        {/* Back button */}
         <button
           type="button"
-          onClick={() => router.back()}
-          className="mt-8 rounded-lg bg-white/10 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/18"
+          onClick={() => {
+            window.electronAPI?.mpv.quit().catch(() => {});
+            router.back();
+          }}
+          className="mt-7 rounded-full px-5 py-2 text-[13px] font-medium text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white/70"
         >
-          Back
+          {status === "ended" ? "Done" : "Back"}
         </button>
       </div>
     </div>

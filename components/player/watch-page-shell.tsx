@@ -4,27 +4,9 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
 const playerLoading = () => (
-  <main className="flex min-h-screen items-center justify-center bg-[#090909] px-6">
-    <div className="w-full max-w-md">
-      <div className="h-2 overflow-hidden rounded-full bg-white/10">
-        <div
-          className="h-full w-2/3 rounded-full bg-white"
-          style={{ animation: "shinobi-player-loading 1.2s ease-in-out infinite" }}
-        />
-      </div>
-      <h1 className="mt-6 text-center text-2xl font-semibold text-white">Loading player</h1>
-      <p className="mt-4 text-center text-sm text-white/60">
-        Preparing player controls and media overlays.
-      </p>
-      <style>{`
-        @keyframes shinobi-player-loading {
-          0% { transform: translateX(-30%); opacity: 0.5; }
-          50% { transform: translateX(20%); opacity: 1; }
-          100% { transform: translateX(70%); opacity: 0.5; }
-        }
-      `}</style>
-    </div>
-  </main>
+  <div className="fixed inset-0 flex items-center justify-center bg-[#0a0a0a]">
+    <div className="h-5 w-5 animate-spin rounded-full border-[2px] border-white/10 border-t-white/50" />
+  </div>
 );
 
 const WatchPlayer = dynamic(
