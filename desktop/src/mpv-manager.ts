@@ -53,13 +53,28 @@ export class MpvManager extends EventEmitter {
       "--force-window=no"
     ];
 
+    console.log(`[mpv] spawning: ${this.mpvBinary}`, args);
+    console.log(`[mpv] socket path: ${SOCKET_PATH}`);
+
     this.process = spawn(this.mpvBinary, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    this.process.on("exit", (code) => {
+    console.log(`[mpv] pid: ${this.process.pid ?? "none"}`);
+
+    this.process.on("error", (err) => {
+      console.error(`[mpv] spawn error:`, err.message);
+    });
+
+    this.process.on("exit", (code, signal) => {
+      console.log(`[mpv] exited code=${code} signal=${signal}`);
       this.cleanup();
       this.emit("exit", code);
+    });
+
+    this.process.stdout?.on("data", (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg) console.log(`[mpv:stdout] ${msg}`);
     });
 
     this.process.stderr?.on("data", (data: Buffer) => {
@@ -85,16 +100,23 @@ export class MpvManager extends EventEmitter {
 
   private async connectSocket(): Promise<void> {
     const started = Date.now();
+    let attempts = 0;
 
     while (Date.now() - started < MPV_CONNECT_TIMEOUT_MS) {
+      attempts++;
       try {
         await this.tryConnect();
+        console.log(`[mpv] socket connected after ${attempts} attempts (${Date.now() - started}ms)`);
         return;
-      } catch {
+      } catch (err) {
+        if (attempts <= 3 || attempts % 10 === 0) {
+          console.log(`[mpv] connect attempt ${attempts} failed: ${err instanceof Error ? err.message : err}`);
+        }
         await new Promise((r) => setTimeout(r, MPV_CONNECT_RETRY_MS));
       }
     }
 
+    console.error(`[mpv] gave up after ${attempts} attempts (${Date.now() - started}ms)`);
     throw new Error("Failed to connect to mpv IPC socket within timeout");
   }
 
