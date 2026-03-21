@@ -48,14 +48,17 @@ async function resolveMpvPath(): Promise<string | null> {
   }
 
   // Ask user to locate it
-  const result = await dialog.showOpenDialog({
+  const dialogOptions = {
     title: "Locate mpv",
     message: "mpv was not found on your PATH. Please locate mpv.exe.",
     filters: process.platform === "win32"
       ? [{ name: "mpv", extensions: ["exe"] }]
       : [],
-    properties: ["openFile"],
-  });
+    properties: ["openFile" as const],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
 
   if (result.canceled || !result.filePaths[0]) {
     return null;
@@ -171,14 +174,6 @@ function registerMpvIpc() {
 }
 
 app.whenReady().then(async () => {
-  const resolved = await resolveMpvPath();
-  if (!resolved) {
-    dialog.showErrorBox("mpv required", "Shinobi requires mpv for video playback. The app will now close.");
-    app.quit();
-    return;
-  }
-  mpvPath = resolved;
-
   // Allow loading resources from the backend
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     callback({ requestHeaders: details.requestHeaders });
@@ -186,6 +181,20 @@ app.whenReady().then(async () => {
 
   registerMpvIpc();
   createWindow();
+
+  // Check mpv after window exists so dialogs have a parent
+  const resolved = await resolveMpvPath();
+  if (!resolved) {
+    await dialog.showMessageBox(mainWindow!, {
+      type: "error",
+      title: "mpv required",
+      message: "Shinobi requires mpv for video playback.",
+      detail: "The app will now close. Install mpv and restart.",
+    });
+    app.quit();
+    return;
+  }
+  mpvPath = resolved;
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
