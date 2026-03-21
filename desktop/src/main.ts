@@ -1,13 +1,31 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { MpvManager } from "./mpv-manager";
 
 const DEV_SERVER_URL = "http://localhost:3000";
+const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
 let mpvManager: MpvManager | null = null;
+let mpvPath = "mpv";
 
-function isMpvInstalled(): boolean {
+function loadConfig(): Record<string, string> {
+  try {
+    if (existsSync(CONFIG_PATH)) {
+      return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+    }
+  } catch {}
+  return {};
+}
+
+function saveConfig(config: Record<string, string>) {
+  try {
+    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  } catch {}
+}
+
+function findMpvOnPath(): boolean {
   try {
     const cmd = process.platform === "win32" ? "where" : "which";
     execFileSync(cmd, ["mpv"], { stdio: "ignore" });
@@ -17,12 +35,36 @@ function isMpvInstalled(): boolean {
   }
 }
 
-function showMpvMissingDialog() {
-  const message = process.platform === "win32"
-    ? "mpv was not found on your system.\n\nTo install:\n1. Download mpv from https://mpv.io\n2. Extract to a folder (e.g. C:\\mpv)\n3. Add that folder to your system PATH\n4. Restart Shinobi"
-    : "mpv was not found on your system.\n\nInstall it with your package manager:\n  macOS: brew install mpv\n  Ubuntu/Debian: sudo apt install mpv\n  Arch: sudo pacman -S mpv\n\nThen restart Shinobi.";
+async function resolveMpvPath(): Promise<string | null> {
+  // Check saved config first
+  const config = loadConfig();
+  if (config.mpvPath && existsSync(config.mpvPath)) {
+    return config.mpvPath;
+  }
 
-  dialog.showErrorBox("mpv not found", message);
+  // Check PATH
+  if (findMpvOnPath()) {
+    return "mpv";
+  }
+
+  // Ask user to locate it
+  const result = await dialog.showOpenDialog({
+    title: "Locate mpv",
+    message: "mpv was not found on your PATH. Please locate mpv.exe.",
+    filters: process.platform === "win32"
+      ? [{ name: "mpv", extensions: ["exe"] }]
+      : [],
+    properties: ["openFile"],
+  });
+
+  if (result.canceled || !result.filePaths[0]) {
+    return null;
+  }
+
+  const selected = result.filePaths[0];
+  config.mpvPath = selected;
+  saveConfig(config);
+  return selected;
 }
 
 function createWindow() {
@@ -58,7 +100,7 @@ function registerMpvIpc() {
       mpvManager = null;
     }
 
-    mpvManager = new MpvManager();
+    mpvManager = new MpvManager(mpvPath);
     try {
       await mpvManager.start(options.streamUrl, {
         startTime: options.startTime,
@@ -66,8 +108,8 @@ function registerMpvIpc() {
     } catch (err) {
       mpvManager = null;
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("socket") || msg.includes("timeout")) {
-        throw new Error("mpv failed to start. Make sure mpv is installed and on your PATH.");
+      if (msg.includes("socket") || msg.includes("timeout") || msg.includes("ENOENT")) {
+        throw new Error("mpv failed to start. Make sure mpv is installed and on your PATH, or restart Shinobi to re-select the mpv location.");
       }
       throw err;
     }
@@ -128,12 +170,14 @@ function registerMpvIpc() {
   });
 }
 
-app.whenReady().then(() => {
-  if (!isMpvInstalled()) {
-    showMpvMissingDialog();
+app.whenReady().then(async () => {
+  const resolved = await resolveMpvPath();
+  if (!resolved) {
+    dialog.showErrorBox("mpv required", "Shinobi requires mpv for video playback. The app will now close.");
     app.quit();
     return;
   }
+  mpvPath = resolved;
 
   // Allow loading resources from the backend
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {

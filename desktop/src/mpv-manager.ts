@@ -30,6 +30,12 @@ export class MpvManager extends EventEmitter {
   private requestId = 0;
   private pendingRequests = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
   private buffer = "";
+  private mpvBinary: string;
+
+  constructor(mpvBinary = "mpv") {
+    super();
+    this.mpvBinary = mpvBinary;
+  }
 
   async start(streamUrl: string, options?: { startTime?: number }): Promise<void> {
     // Clean up stale socket
@@ -47,7 +53,7 @@ export class MpvManager extends EventEmitter {
       "--force-window=no"
     ];
 
-    this.process = spawn("mpv", args, {
+    this.process = spawn(this.mpvBinary, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
