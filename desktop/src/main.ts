@@ -98,8 +98,12 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle("mpv:spawn", (_event, options: { streamUrl: string; startTime?: number }) => {
+    console.log("[mpv] spawn requested, url:", options.streamUrl?.slice(0, 80));
+    console.log("[mpv] mpvPath:", mpvPath);
+
     // Kill existing mpv if running
     if (mpvProcess) {
+      console.log("[mpv] killing existing process");
       try { mpvProcess.kill(); } catch {}
       mpvProcess = null;
     }
@@ -116,12 +120,27 @@ function registerIpc() {
 
     args.push(options.streamUrl);
 
+    console.log("[mpv] spawning:", mpvPath, args);
+
     mpvProcess = spawn(mpvPath, args, {
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       detached: false,
     });
 
-    mpvProcess.on("exit", () => {
+    console.log("[mpv] pid:", mpvProcess.pid ?? "none");
+
+    mpvProcess.stdout?.on("data", (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg) console.log("[mpv:stdout]", msg);
+    });
+
+    mpvProcess.stderr?.on("data", (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg) console.log("[mpv:stderr]", msg);
+    });
+
+    mpvProcess.on("exit", (code, signal) => {
+      console.log(`[mpv] exited code=${code} signal=${signal}`);
       mpvProcess = null;
       mainWindow?.webContents.send("mpv:ended");
     });
