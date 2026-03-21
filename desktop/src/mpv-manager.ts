@@ -16,10 +16,16 @@ type MpvTrack = {
   external: boolean;
 };
 
+const PIPE_NAME = `shinobi-mpv-${process.pid}`;
 const SOCKET_PATH =
   process.platform === "win32"
-    ? `\\\\.\\pipe\\shinobi-mpv-${process.pid}`
-    : path.join(os.tmpdir(), `shinobi-mpv-${process.pid}.sock`);
+    ? `\\\\.\\pipe\\${PIPE_NAME}`
+    : path.join(os.tmpdir(), `${PIPE_NAME}.sock`);
+// mpv on Windows expects just the pipe name without the \\.\pipe\ prefix
+const MPV_IPC_ARG =
+  process.platform === "win32"
+    ? PIPE_NAME
+    : SOCKET_PATH;
 const OBSERVED_PROPERTIES = ["time-pos", "duration", "pause", "volume", "mute", "track-list", "eof-reached"];
 const MPV_CONNECT_TIMEOUT_MS = 10000;
 const MPV_CONNECT_RETRY_MS = 200;
@@ -44,13 +50,11 @@ export class MpvManager extends EventEmitter {
     }
 
     const args = [
-      `--input-ipc-server=${SOCKET_PATH}`,
-      "--idle=once",
-      "--no-terminal",
+      `--input-ipc-server=${MPV_IPC_ARG}`,
+      "--idle",
       "--no-osc",
       "--no-osd-bar",
       "--keep-open=yes",
-      "--force-window=no"
     ];
 
     console.log(`[mpv] spawning: ${this.mpvBinary}`, args);
