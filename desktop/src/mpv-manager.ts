@@ -39,6 +39,7 @@ export class MpvManager extends EventEmitter {
   private pendingRequests = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
   private buffer = "";
   private mpvBinary: string;
+  private destroyed = false;
 
   constructor(mpvBinary = "mpv") {
     super();
@@ -120,6 +121,9 @@ export class MpvManager extends EventEmitter {
     let attempts = 0;
 
     while (Date.now() - started < MPV_CONNECT_TIMEOUT_MS) {
+      if (this.destroyed) {
+        throw new Error("mpv manager was destroyed before socket connected");
+      }
       attempts++;
       try {
         await this.tryConnect();
@@ -287,6 +291,7 @@ export class MpvManager extends EventEmitter {
   }
 
   async quit(): Promise<void> {
+    this.destroyed = true;
     try {
       await this.sendCommand(["quit"]);
     } catch {
@@ -296,6 +301,7 @@ export class MpvManager extends EventEmitter {
   }
 
   private cleanup() {
+    this.destroyed = true;
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
