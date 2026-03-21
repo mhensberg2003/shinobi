@@ -119,9 +119,20 @@ function registerMpvIpc() {
     }
 
     mpvManager = new MpvManager(mpvPath);
+
+    // Get the native window handle for embedding mpv
+    const nativeHandle = mainWindow.getNativeWindowHandle();
+    // On Windows this is a HWND (Buffer), convert to decimal string for --wid
+    const wid = process.platform === "win32"
+      ? nativeHandle.readUInt32LE(0).toString()
+      : `0x${nativeHandle.readUInt32LE(0).toString(16)}`;
+
+    console.log(`[mpv] embedding into wid: ${wid}`);
+
     try {
       await mpvManager.start(options.streamUrl, {
         startTime: options.startTime,
+        wid,
       });
     } catch (err) {
       mpvManager = null;

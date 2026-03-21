@@ -16,16 +16,17 @@ type MpvTrack = {
   external: boolean;
 };
 
-const PIPE_NAME = `shinobi-mpv-${process.pid}`;
-const SOCKET_PATH =
-  process.platform === "win32"
-    ? `\\\\.\\pipe\\${PIPE_NAME}`
-    : path.join(os.tmpdir(), `${PIPE_NAME}.sock`);
-// mpv on Windows expects just the pipe name without the \\.\pipe\ prefix
-const MPV_IPC_ARG =
-  process.platform === "win32"
-    ? PIPE_NAME
-    : SOCKET_PATH;
+let spawnCounter = 0;
+
+function getSocketPaths() {
+  const id = `shinobi-mpv-${process.pid}-${++spawnCounter}`;
+  const socketPath = process.platform === "win32"
+    ? `\\\\.\\pipe\\${id}`
+    : path.join(os.tmpdir(), `${id}.sock`);
+  // mpv on Windows auto-adds \\.\pipe\ prefix
+  const mpvIpcArg = process.platform === "win32" ? id : socketPath;
+  return { socketPath, mpvIpcArg };
+}
 const OBSERVED_PROPERTIES = ["time-pos", "duration", "pause", "volume", "mute", "track-list", "eof-reached"];
 const MPV_CONNECT_TIMEOUT_MS = 10000;
 const MPV_CONNECT_RETRY_MS = 200;
@@ -33,6 +34,7 @@ const MPV_CONNECT_RETRY_MS = 200;
 export class MpvManager extends EventEmitter {
   private process: ChildProcess | null = null;
   private socket: Socket | null = null;
+  private socketPath: string = "";
   private requestId = 0;
   private pendingRequests = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
   private buffer = "";
@@ -43,25 +45,33 @@ export class MpvManager extends EventEmitter {
     this.mpvBinary = mpvBinary;
   }
 
-  async start(streamUrl: string, options?: { startTime?: number }): Promise<void> {
+  async start(streamUrl: string, options?: { startTime?: number; wid?: string }): Promise<void> {
+    const { socketPath, mpvIpcArg } = getSocketPaths();
+    this.socketPath = socketPath;
+
     // Clean up stale socket
-    if (existsSync(SOCKET_PATH)) {
-      if (process.platform !== "win32") { try { unlinkSync(SOCKET_PATH); } catch {} }
+    if (process.platform !== "win32" && existsSync(socketPath)) {
+      try { unlinkSync(socketPath); } catch {}
     }
 
     const args = [
       "--no-config",
-      `--input-ipc-server=${MPV_IPC_ARG}`,
+      `--input-ipc-server=${mpvIpcArg}`,
       "--idle",
       "--no-terminal",
       "--no-osc",
       "--no-osd-bar",
       "--keep-open=yes",
-      "--force-window=no",
     ];
 
+    if (options?.wid) {
+      args.push(`--wid=${options.wid}`);
+    } else {
+      args.push("--force-window=yes");
+    }
+
     console.log(`[mpv] spawning: ${this.mpvBinary}`, args);
-    console.log(`[mpv] socket path: ${SOCKET_PATH}`);
+    console.log(`[mpv] socket path: ${socketPath}`);
 
     this.process = spawn(this.mpvBinary, args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -129,7 +139,7 @@ export class MpvManager extends EventEmitter {
 
   private tryConnect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socket = createConnection(SOCKET_PATH);
+      const socket = createConnection(this.socketPath);
 
       socket.on("connect", () => {
         this.socket = socket;
@@ -296,6 +306,6 @@ export class MpvManager extends EventEmitter {
     this.process = null;
     this.pendingRequests.clear();
 
-    if (process.platform !== "win32") { try { unlinkSync(SOCKET_PATH); } catch {} }
+    if (process.platform !== "win32" && this.socketPath) { try { unlinkSync(this.socketPath); } catch {} }
   }
 }
