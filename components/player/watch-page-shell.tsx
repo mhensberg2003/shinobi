@@ -3,34 +3,38 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
+const playerLoading = () => (
+  <main className="flex min-h-screen items-center justify-center bg-[#090909] px-6">
+    <div className="w-full max-w-md">
+      <div className="h-2 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full w-2/3 rounded-full bg-white"
+          style={{ animation: "shinobi-player-loading 1.2s ease-in-out infinite" }}
+        />
+      </div>
+      <h1 className="mt-6 text-center text-2xl font-semibold text-white">Loading player</h1>
+      <p className="mt-4 text-center text-sm text-white/60">
+        Preparing player controls and media overlays.
+      </p>
+      <style>{`
+        @keyframes shinobi-player-loading {
+          0% { transform: translateX(-30%); opacity: 0.5; }
+          50% { transform: translateX(20%); opacity: 1; }
+          100% { transform: translateX(70%); opacity: 0.5; }
+        }
+      `}</style>
+    </div>
+  </main>
+);
+
 const WatchPlayer = dynamic(
   () => import("./watch-player").then((mod) => mod.WatchPlayer),
-  {
-    ssr: false,
-    loading: () => (
-      <main className="flex min-h-screen items-center justify-center bg-[#090909] px-6">
-        <div className="w-full max-w-md">
-          <div className="h-2 overflow-hidden rounded-full bg-white/10">
-            <div
-              className="h-full w-2/3 rounded-full bg-white"
-              style={{ animation: "shinobi-player-loading 1.2s ease-in-out infinite" }}
-            />
-          </div>
-          <h1 className="mt-6 text-center text-2xl font-semibold text-white">Loading player</h1>
-          <p className="mt-4 text-center text-sm text-white/60">
-            Preparing player controls and media overlays.
-          </p>
-          <style>{`
-            @keyframes shinobi-player-loading {
-              0% { transform: translateX(-30%); opacity: 0.5; }
-              50% { transform: translateX(20%); opacity: 1; }
-              100% { transform: translateX(70%); opacity: 0.5; }
-            }
-          `}</style>
-        </div>
-      </main>
-    ),
-  },
+  { ssr: false, loading: playerLoading },
+);
+
+const MpvPlayer = dynamic(
+  () => import("./mpv-player").then((mod) => mod.MpvPlayer),
+  { ssr: false, loading: playerLoading },
 );
 
 type SubtitleTrack = {
@@ -161,6 +165,14 @@ function streamStatus(
   return statuses[streamIndex] ?? null;
 }
 
+function useIsElectron() {
+  const [isElectron, setIsElectron] = useState(false);
+  useEffect(() => {
+    setIsElectron(Boolean(window.electronAPI?.isElectron));
+  }, []);
+  return isElectron;
+}
+
 export function WatchPageShell({
   storageKey,
   sessionKey,
@@ -176,6 +188,7 @@ export function WatchPageShell({
   demuxRequest,
   restrictForwardSeeksToBuffered = true,
 }: WatchPageShellProps) {
+  const isElectron = useIsElectron();
   const [availableStreams, setAvailableStreams] = useState<InspectableStream[]>([]);
   const [backendSubtitles, setBackendSubtitles] = useState<SubtitleTrack[]>([]);
   const [subtitleStatuses, setSubtitleStatuses] = useState<Record<number, DemuxStatus>>({});
@@ -256,7 +269,7 @@ export function WatchPageShell({
   useEffect(() => {
     let cancelled = false;
 
-    if (!sessionKey || magnetLink) {
+    if (isElectron || !sessionKey || magnetLink) {
       setResolvedMagnetLink(magnetLink);
       return () => {
         cancelled = true;
@@ -297,12 +310,12 @@ export function WatchPageShell({
     return () => {
       cancelled = true;
     };
-  }, [magnetLink, sessionKey]);
+  }, [isElectron, magnetLink, sessionKey]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!demuxRequest) {
+    if (isElectron || !demuxRequest) {
       return () => {
         cancelled = true;
       };
@@ -361,7 +374,7 @@ export function WatchPageShell({
     return () => {
       cancelled = true;
     };
-  }, [demuxRequest]);
+  }, [isElectron, demuxRequest]);
 
   async function startDemux(kind: "subtitle" | "audio", stream: InspectableStream) {
     if (!demuxRequest) {
@@ -576,6 +589,26 @@ export function WatchPageShell({
       return;
     }
     void startDemux("audio", stream);
+  }
+
+  if (isElectron) {
+    // Use the direct source URL for mpv — bypasses the Next.js stream proxy.
+    // mpv handles all codecs/containers natively, no demux needed.
+    const mpvStreamUrl = demuxRequest?.sourceUrl ?? streamUrl;
+    return (
+      <MpvPlayer
+        storageKey={storageKey}
+        sessionKey={sessionKey}
+        title={title}
+        streamUrl={mpvStreamUrl}
+        posterUrl={posterUrl}
+        episodeNumber={episodeNumber}
+        episodeTotal={episodeTotal}
+        magnetLink={resolvedMagnetLink}
+        torrentHash={torrentHash}
+        fileIndex={fileIndex}
+      />
+    );
   }
 
   return (

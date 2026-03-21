@@ -16,10 +16,13 @@ type MpvTrack = {
   external: boolean;
 };
 
-const SOCKET_PATH = path.join(os.tmpdir(), `shinobi-mpv-${process.pid}.sock`);
+const SOCKET_PATH =
+  process.platform === "win32"
+    ? `\\\\.\\pipe\\shinobi-mpv-${process.pid}`
+    : path.join(os.tmpdir(), `shinobi-mpv-${process.pid}.sock`);
 const OBSERVED_PROPERTIES = ["time-pos", "duration", "pause", "volume", "mute", "track-list", "eof-reached"];
-const MPV_CONNECT_TIMEOUT_MS = 5000;
-const MPV_CONNECT_RETRY_MS = 100;
+const MPV_CONNECT_TIMEOUT_MS = 10000;
+const MPV_CONNECT_RETRY_MS = 200;
 
 export class MpvManager extends EventEmitter {
   private process: ChildProcess | null = null;
@@ -31,7 +34,7 @@ export class MpvManager extends EventEmitter {
   async start(streamUrl: string, options?: { startTime?: number }): Promise<void> {
     // Clean up stale socket
     if (existsSync(SOCKET_PATH)) {
-      try { unlinkSync(SOCKET_PATH); } catch {}
+      if (process.platform !== "win32") { try { unlinkSync(SOCKET_PATH); } catch {} }
     }
 
     const args = [
@@ -41,12 +44,7 @@ export class MpvManager extends EventEmitter {
       "--no-osc",
       "--no-osd-bar",
       "--keep-open=yes",
-      "--force-window=no",
-      "--vo=null",
-      "--video=no",
-      // Audio/video output will be handled by mpv natively
-      // We start with --video=no because for Phase 1 we only test IPC
-      // Phase 2 will add --wid for embedded video rendering
+      "--force-window=no"
     ];
 
     this.process = spawn("mpv", args, {
@@ -54,8 +52,8 @@ export class MpvManager extends EventEmitter {
     });
 
     this.process.on("exit", (code) => {
-      console.log(`[mpv] process exited with code ${code}`);
       this.cleanup();
+      this.emit("exit", code);
     });
 
     this.process.stderr?.on("data", (data: Buffer) => {
@@ -263,6 +261,6 @@ export class MpvManager extends EventEmitter {
     this.process = null;
     this.pendingRequests.clear();
 
-    try { unlinkSync(SOCKET_PATH); } catch {}
+    if (process.platform !== "win32") { try { unlinkSync(SOCKET_PATH); } catch {} }
   }
 }

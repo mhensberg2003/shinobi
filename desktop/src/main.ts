@@ -1,10 +1,29 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { MpvManager } from "./mpv-manager";
 
 const DEV_SERVER_URL = "http://localhost:3000";
 let mainWindow: BrowserWindow | null = null;
 let mpvManager: MpvManager | null = null;
+
+function isMpvInstalled(): boolean {
+  try {
+    const cmd = process.platform === "win32" ? "where" : "which";
+    execFileSync(cmd, ["mpv"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function showMpvMissingDialog() {
+  const message = process.platform === "win32"
+    ? "mpv was not found on your system.\n\nTo install:\n1. Download mpv from https://mpv.io\n2. Extract to a folder (e.g. C:\\mpv)\n3. Add that folder to your system PATH\n4. Restart Shinobi"
+    : "mpv was not found on your system.\n\nInstall it with your package manager:\n  macOS: brew install mpv\n  Ubuntu/Debian: sudo apt install mpv\n  Arch: sudo pacman -S mpv\n\nThen restart Shinobi.";
+
+  dialog.showErrorBox("mpv not found", message);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -40,9 +59,18 @@ function registerMpvIpc() {
     }
 
     mpvManager = new MpvManager();
-    await mpvManager.start(options.streamUrl, {
-      startTime: options.startTime,
-    });
+    try {
+      await mpvManager.start(options.streamUrl, {
+        startTime: options.startTime,
+      });
+    } catch (err) {
+      mpvManager = null;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("socket") || msg.includes("timeout")) {
+        throw new Error("mpv failed to start. Make sure mpv is installed and on your PATH.");
+      }
+      throw err;
+    }
 
     // Forward mpv property changes to the renderer
     mpvManager.on("property-change", (prop: string, value: unknown) => {
@@ -101,6 +129,12 @@ function registerMpvIpc() {
 }
 
 app.whenReady().then(() => {
+  if (!isMpvInstalled()) {
+    showMpvMissingDialog();
+    app.quit();
+    return;
+  }
+
   // Allow loading resources from the backend
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     callback({ requestHeaders: details.requestHeaders });
