@@ -35,36 +35,52 @@ function findMpvOnPath(): boolean {
   }
 }
 
-async function resolveMpvPath(): Promise<string | null> {
-  // Check saved config first
+function resolveMpvPathSync(): string | null {
   const config = loadConfig();
+  console.log("[shinobi] config path:", CONFIG_PATH);
+  console.log("[shinobi] loaded config:", config);
+
   if (config.mpvPath && existsSync(config.mpvPath)) {
+    console.log("[shinobi] using saved mpv path:", config.mpvPath);
     return config.mpvPath;
   }
 
-  // Check PATH
-  if (findMpvOnPath()) {
+  const onPath = findMpvOnPath();
+  console.log("[shinobi] mpv on PATH:", onPath);
+  if (onPath) {
     return "mpv";
   }
 
-  // Ask user to locate it
-  const dialogOptions = {
-    title: "Locate mpv",
-    message: "mpv was not found on your PATH. Please locate mpv.exe.",
-    filters: process.platform === "win32"
-      ? [{ name: "mpv", extensions: ["exe"] }]
-      : [],
-    properties: ["openFile" as const],
-  };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
-    : await dialog.showOpenDialog(dialogOptions);
+  console.log("[shinobi] mpv not found, showing file picker dialog");
 
-  if (result.canceled || !result.filePaths[0]) {
+  // Show a message first explaining what's needed
+  dialog.showMessageBoxSync({
+    type: "warning",
+    title: "mpv not found",
+    message: "mpv is required for video playback.",
+    detail: "mpv was not found on your PATH. Please select the location of mpv.exe in the next dialog.",
+    buttons: ["Select mpv.exe", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  const result = dialog.showOpenDialogSync({
+    title: "Locate mpv.exe",
+    filters: process.platform === "win32"
+      ? [{ name: "mpv.exe", extensions: ["exe"] }]
+      : [],
+    properties: ["openFile"],
+  });
+
+  console.log("[shinobi] file picker result:", result);
+
+  if (!result || !result[0]) {
+    console.log("[shinobi] no mpv selected, quitting");
     return null;
   }
 
-  const selected = result.filePaths[0];
+  const selected = result[0];
+  console.log("[shinobi] saving mpv path:", selected);
   config.mpvPath = selected;
   saveConfig(config);
   return selected;
@@ -97,7 +113,6 @@ function registerMpvIpc() {
   ipcMain.handle("mpv:spawn", async (_event, options: { streamUrl: string; startTime?: number }) => {
     if (!mainWindow) return;
 
-    // Clean up any existing mpv instance
     if (mpvManager) {
       await mpvManager.quit().catch(() => {});
       mpvManager = null;
@@ -117,7 +132,6 @@ function registerMpvIpc() {
       throw err;
     }
 
-    // Forward mpv property changes to the renderer
     mpvManager.on("property-change", (prop: string, value: unknown) => {
       mainWindow?.webContents.send("mpv:property-change", prop, value);
     });
@@ -126,7 +140,6 @@ function registerMpvIpc() {
       mainWindow?.webContents.send("mpv:end-file");
     });
 
-    // Return the initial track list
     return mpvManager.getTrackList();
   });
 
@@ -173,28 +186,23 @@ function registerMpvIpc() {
   });
 }
 
-app.whenReady().then(async () => {
-  // Allow loading resources from the backend
+app.whenReady().then(() => {
+  console.log("[shinobi] app ready, resolving mpv path...");
+  const resolved = resolveMpvPathSync();
+  if (!resolved) {
+    console.log("[shinobi] no mpv path resolved, quitting");
+    app.quit();
+    return;
+  }
+  mpvPath = resolved;
+  console.log("[shinobi] mpv path resolved:", mpvPath);
+
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     callback({ requestHeaders: details.requestHeaders });
   });
 
   registerMpvIpc();
   createWindow();
-
-  // Check mpv after window exists so dialogs have a parent
-  const resolved = await resolveMpvPath();
-  if (!resolved) {
-    await dialog.showMessageBox(mainWindow!, {
-      type: "error",
-      title: "mpv required",
-      message: "Shinobi requires mpv for video playback.",
-      detail: "The app will now close. Install mpv and restart.",
-    });
-    app.quit();
-    return;
-  }
-  mpvPath = resolved;
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
