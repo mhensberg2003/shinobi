@@ -50,11 +50,14 @@ export class MpvManager extends EventEmitter {
     }
 
     const args = [
+      "--no-config",
       `--input-ipc-server=${MPV_IPC_ARG}`,
       "--idle",
+      "--no-terminal",
       "--no-osc",
       "--no-osd-bar",
       "--keep-open=yes",
+      "--force-window=no",
     ];
 
     console.log(`[mpv] spawning: ${this.mpvBinary}`, args);
