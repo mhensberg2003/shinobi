@@ -84,6 +84,7 @@ function createWindow() {
     minHeight: 500,
     backgroundColor: "#141414",
     title: "Shinobi",
+    icon: path.join(__dirname, "../assets/icon.png"),
     frame: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -94,7 +95,6 @@ function createWindow() {
   });
 
   mainWindow.loadURL(DEV_SERVER_URL);
-  mainWindow.webContents.openDevTools();
 
   mainWindow.on("closed", () => {
     mainWindow = null;

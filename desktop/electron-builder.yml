@@ -4,16 +4,21 @@ directories:
   output: release
 files:
   - dist/**/*
+  - assets/**/*
   - package.json
+icon: assets/icon.png
 linux:
   target:
     - AppImage
     - deb
   category: AudioVideo
+  icon: assets/icon.png
 mac:
   target:
     - dmg
   category: public.app-category.entertainment
+  icon: assets/icon.png
 win:
   target:
     - nsis
+  icon: assets/icon.png
