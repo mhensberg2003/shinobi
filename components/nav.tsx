@@ -3,9 +3,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import type { MediaSearchItem } from "@/lib/media/types";
 
 export function Nav() {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaSearchItem[]>([]);
@@ -66,6 +68,8 @@ export function Nav() {
 
   function close() { setOpen(false); setQuery(""); setResults([]); }
 
+  if (pathname === "/login") return null;
+
   return (
     <div ref={wrapRef} className="fixed top-0 left-0 right-0 z-50 flex flex-col items-center pointer-events-none" style={{ paddingTop: isElectron ? "44px" : "12px" }}>
       {/* floating pill nav */}
@@ -98,6 +102,26 @@ export function Nav() {
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </button>
+
+        <div className="w-px h-4 bg-white/10 mx-1" />
+
+        <button
+          type="button"
+          onClick={async () => {
+            await fetch("/api/auth/logout", { method: "POST" });
+            window.location.href = "/login";
+          }}
+          aria-label="Sign out"
+          title="Sign out"
+          className="flex items-center justify-center w-8 h-8 rounded-full border-none cursor-pointer transition-colors duration-150 mr-0.5"
+          style={{ background: "transparent", color: "rgba(255,255,255,0.4)" }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
         </button>
       </nav>
