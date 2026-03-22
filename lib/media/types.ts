@@ -1,6 +1,6 @@
 export type MediaKind = "anime" | "movie" | "show";
 
-export type MediaProvider = "anilist" | "tmdb";
+export type MediaProvider = "anilist" | "tmdb" | "custom";
 
 export type MediaSearchItem = {
   id: string;

@@ -6,7 +6,7 @@ import { PlayButton } from "@/components/play-button";
 import { getHomeCatalog, getMediaDetail } from "@/lib/media/catalog";
 
 type PageProps = {
-  params: Promise<{ provider: "anilist" | "tmdb"; id: string }>;
+  params: Promise<{ provider: "anilist" | "tmdb" | "custom"; id: string }>;
   searchParams: Promise<{ kind?: "anime" | "movie" | "show" }>;
 };
 
@@ -30,7 +30,7 @@ function formatMeta(detail: Awaited<ReturnType<typeof getMediaDetail>>) {
 export default async function TitlePage({ params, searchParams }: PageProps) {
   const [{ provider, id }, { kind }] = await Promise.all([params, searchParams]);
 
-  if (provider !== "anilist" && provider !== "tmdb") notFound();
+  if (provider !== "anilist" && provider !== "tmdb" && provider !== "custom") notFound();
 
   const [detail, catalog] = await Promise.all([
     getMediaDetail(provider, id, kind).catch(() => null),
@@ -108,7 +108,7 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
                 label={detail.episodes?.length ? "Play S1 E1" : "Play"}
                 title={detail.title}
                 alternateTitles={alternateTitles}
-                provider={"tmdb"}
+                provider={provider}
                 mediaId={id}
                 kind={detail.kind}
                 anilistId={anilistId}
@@ -151,7 +151,7 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
             episodes={detail.episodes}
             title={detail.title}
             alternateTitles={alternateTitles}
-            provider={"tmdb"}
+            provider={provider}
             mediaId={id}
             kind={detail.kind}
             anilistId={anilistId}

@@ -8,7 +8,7 @@ export function PlayButton({ label = "Play", title, alternateTitles, provider, m
   label?: string;
   title: string;
   alternateTitles?: string[];
-  provider?: "anilist" | "tmdb";
+  provider?: "anilist" | "tmdb" | "custom";
   mediaId?: string;
   kind?: "anime" | "movie" | "show";
   anilistId?: string;

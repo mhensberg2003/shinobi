@@ -1,6 +1,7 @@
 import "server-only";
 
 import { lookupAniListIds } from "./anilist";
+import { getOnePaceDetail } from "./custom/one-pace";
 import { getTmdbDetail, getTrendingAnime, getTrendingTmdb, searchTmdb } from "./tmdb";
 import type { MediaDetail, MediaSearchItem } from "./types";
 
@@ -23,10 +24,14 @@ export async function searchCatalog(query: string) {
 }
 
 export async function getMediaDetail(
-  provider: "anilist" | "tmdb",
+  provider: "anilist" | "tmdb" | "custom",
   id: string,
   kind?: "anime" | "movie" | "show",
 ): Promise<MediaDetail> {
+  if (provider === "custom" && id === "one-pace") {
+    return getOnePaceDetail();
+  }
+
   const resolvedKind = kind ?? "movie";
   const detail = await getTmdbDetail(resolvedKind, id);
 
