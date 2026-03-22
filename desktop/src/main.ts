@@ -94,6 +94,7 @@ function createWindow() {
   });
 
   mainWindow.loadURL(DEV_SERVER_URL);
+  mainWindow.webContents.openDevTools();
 
   mainWindow.on("closed", () => {
     mainWindow = null;

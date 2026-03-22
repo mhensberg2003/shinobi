@@ -12,7 +12,7 @@ Environment=NODE_ENV=production
 Environment=PORT=7823
 Environment=HOSTNAME=0.0.0.0
 EnvironmentFile=/etc/shinobi/shinobi.env
-ExecStart=/usr/bin/node /opt/shinobi/.next/standalone/server.js
+ExecStart=/usr/bin/node /opt/shinobi/server.js
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
