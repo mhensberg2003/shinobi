@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { randomUUID } from "@/lib/uuid";
 
 export function PlayButton({ label = "Play", title, alternateTitles, provider, mediaId, kind, anilistId, posterUrl, year, episodeHint, episodeNumber, episodeTotal, season, className, style }: {
   label?: string;
@@ -30,7 +31,7 @@ export function PlayButton({ label = "Play", title, alternateTitles, provider, m
     }
 
     setPending(true);
-    requestKeyRef.current ??= crypto.randomUUID();
+    requestKeyRef.current ??= randomUUID();
 
     const params = new URLSearchParams({
       requestKey: requestKeyRef.current,

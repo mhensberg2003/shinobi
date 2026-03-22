@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { startTransition } from "react";
+import { randomUUID } from "@/lib/uuid";
 
 export function PlayIntake({
   title,
@@ -32,7 +33,7 @@ export function PlayIntake({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const requestKey = crypto.randomUUID();
+    const requestKey = randomUUID();
     const params = new URLSearchParams({
       requestKey,
       title,

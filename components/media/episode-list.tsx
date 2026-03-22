@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
+import { randomUUID } from "@/lib/uuid";
 
 type Episode = {
   id: string | number;
@@ -87,7 +88,7 @@ export function EpisodeList({ episodes: initialEpisodes, title, alternateTitles,
     // searches for e.g. "Stardust Crusaders" instead of just "JoJo's Bizarre Adventure"
     const resolvedTitle = seasonName && seasonName !== title ? seasonName : title;
 
-    const params = new URLSearchParams({ requestKey: crypto.randomUUID(), title: resolvedTitle });
+    const params = new URLSearchParams({ requestKey: randomUUID(), title: resolvedTitle });
     // Always include the series title and any alternates so the backend has context
     if (resolvedTitle !== title) params.append("alt", title);
     for (const alt of alternateTitles ?? []) params.append("alt", alt);
