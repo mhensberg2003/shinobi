@@ -68,7 +68,8 @@ export function getOnePaceDetail(): MediaDetail {
     title: "One Pace",
     description:
       "One Pace is a fan project that recuts the One Piece anime to more closely follow the manga, removing filler and padding for a tighter viewing experience.",
-    posterUrl: "https://onepace.net/images/one-pace-poster.png",
+    posterUrl: "https://onepace.net/_next/static/media/logo.0bbcd6da.svg",
+    posterIsLogo: true,
     backdropVideoUrl: "https://onepace.net/_next/static/media/backdrop-loop.1625407a.webm",
     year: 1999,
     genres: ["Action", "Adventure", "Fantasy"],

@@ -16,6 +16,7 @@ function getCustomEntries(): MediaSearchItem[] {
       title: op.title,
       description: op.description,
       posterUrl: op.posterUrl,
+      posterIsLogo: op.posterIsLogo,
       year: op.year,
       genres: op.genres,
     },

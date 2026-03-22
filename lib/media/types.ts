@@ -15,6 +15,7 @@ export type MediaSearchItem = {
   year?: number;
   genres?: string[];
   score?: number;
+  posterIsLogo?: boolean;
 };
 
 export type MediaEpisode = {
