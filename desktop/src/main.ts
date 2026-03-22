@@ -415,7 +415,7 @@ document.addEventListener("keydown", (e) => {
     case "ArrowDown": volume = Math.max(0, volume - 5); api.setProperty("volume", volume); document.getElementById("volFill").style.width = volume+"%"; break;
     case "m": api.command(["cycle", "mute"]); muted = !muted; break;
     case "f": api.toggleFullscreen(); break;
-    case "Escape": api.back(); break;
+    case "Escape": api.isFullscreen().then(fs => { if (fs) api.toggleFullscreen(); }); break;
     case "j": api.command(["cycle", "sub"]); loadTracks(); break;
     case "J": api.command(["cycle", "sub", "down"]); loadTracks(); break;
     case "#": api.command(["cycle", "audio"]); loadTracks(); break;
@@ -818,13 +818,10 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
-  // Private repo — read-only token to access releases API
   autoUpdater.setFeedURL({
     provider: "github",
     owner: "mhensberg2003",
     repo: "shinobi",
-    private: true,
-    token: "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",
   });
 
   autoUpdater.on("update-available", (info: UpdateInfo) => {
