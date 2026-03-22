@@ -9,7 +9,7 @@ type AutoResolveProgressProps = {
   requestKey: string;
   title: string;
   alternateTitles: string[];
-  provider?: "anilist" | "tmdb";
+  provider?: "anilist" | "tmdb" | "custom";
   mediaId?: string;
   kind?: "anime" | "movie" | "show";
   anilistId?: string;

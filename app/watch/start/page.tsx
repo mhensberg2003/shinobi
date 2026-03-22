@@ -5,7 +5,7 @@ type PageProps = {
     requestKey?: string;
     title?: string;
     alt?: string | string[];
-    provider?: "anilist" | "tmdb";
+    provider?: "anilist" | "tmdb" | "custom";
     mediaId?: string;
     kind?: "anime" | "movie" | "show";
     anilistId?: string;

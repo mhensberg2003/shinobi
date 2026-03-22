@@ -86,7 +86,14 @@ export function EpisodeList({ episodes: initialEpisodes, title, alternateTitles,
 
     // Use the season-specific name as the title when available so the backend
     // searches for e.g. "Stardust Crusaders" instead of just "JoJo's Bizarre Adventure"
-    const resolvedTitle = seasonName && seasonName !== title ? seasonName : title;
+    // For custom provider (e.g. One Pace), combine series title + arc name so nyaa
+    // search matches e.g. "[One Pace] Arlong Park 08"
+    const resolvedTitle =
+      provider === "custom" && seasonName && seasonName !== title
+        ? `${title} ${seasonName}`
+        : seasonName && seasonName !== title
+          ? seasonName
+          : title;
 
     const params = new URLSearchParams({ requestKey: randomUUID(), title: resolvedTitle });
     // Always include the series title and any alternates so the backend has context
