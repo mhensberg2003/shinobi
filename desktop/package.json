@@ -1,14 +1,15 @@
 {
   "name": "shinobi-desktop",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "main": "dist/main.js",
+  "homepage": "https://github.com/mhensberg2003/shinobi",
   "scripts": {
     "dev": "tsc && electron dist/main.js",
     "build": "tsc",
     "start": "electron dist/main.js",
     "package": "dotenv -e .env -- electron-builder",
-    "release": "dotenv -e .env -- electron-builder --publish always"
+    "release": "electron-builder --publish always"
   },
   "devDependencies": {
     "dotenv-cli": "^11.0.0",
