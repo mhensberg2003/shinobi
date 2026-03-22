@@ -14,6 +14,8 @@ interface ElectronMpvAPI {
   command(args: unknown[]): Promise<{ ok?: boolean; data?: unknown; error?: string }>;
   getProperty(name: string): Promise<unknown>;
   setProperty(name: string, value: unknown): Promise<{ ok?: boolean; error?: string }>;
+  toggleFullscreen(): Promise<boolean>;
+  isFullscreen(): Promise<boolean>;
   getTracks(): Promise<MpvTrack[]>;
   onEnded(callback: () => void): () => void;
   onProgress(callback: (data: { currentTime: number; duration: number; paused: boolean }) => void): () => void;

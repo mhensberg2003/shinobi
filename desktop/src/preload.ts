@@ -31,6 +31,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return ipcRenderer.invoke("mpv:set-property", name, value);
     },
 
+    toggleFullscreen(): Promise<boolean> {
+      return ipcRenderer.invoke("mpv:toggle-fullscreen");
+    },
+
+    isFullscreen(): Promise<boolean> {
+      return ipcRenderer.invoke("mpv:is-fullscreen");
+    },
+
     getTracks(): Promise<Array<{
       id: number;
       type: "video" | "audio" | "sub";

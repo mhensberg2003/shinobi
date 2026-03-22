@@ -317,7 +317,7 @@ document.getElementById("muteBtn").onclick = () => {
 
 // --- Fullscreen ---
 document.getElementById("fsBtn").onclick = () => {
-  api.command(["cycle", "fullscreen"]);
+  api.toggleFullscreen();
 };
 
 // --- Exit ---
@@ -387,7 +387,7 @@ document.addEventListener("keydown", (e) => {
     case "ArrowUp": volume = Math.min(100, volume + 5); api.setProperty("volume", volume); document.getElementById("volFill").style.width = volume+"%"; break;
     case "ArrowDown": volume = Math.max(0, volume - 5); api.setProperty("volume", volume); document.getElementById("volFill").style.width = volume+"%"; break;
     case "m": api.command(["cycle", "mute"]); muted = !muted; break;
-    case "f": api.command(["cycle", "fullscreen"]); break;
+    case "f": api.toggleFullscreen(); break;
     case "Escape": api.quit(); break;
     case "j": api.command(["cycle", "sub"]); loadTracks(); break;
     case "J": api.command(["cycle", "sub", "down"]); loadTracks(); break;
@@ -745,6 +745,20 @@ function registerIpc() {
     } catch {
       return [];
     }
+  });
+
+  // ---- Window controls ----
+  // ---- Toggle fullscreen (controls both main + mpv overlay windows) ----
+  ipcMain.handle("mpv:toggle-fullscreen", () => {
+    if (!mainWindow) return false;
+    const isFs = mainWindow.isFullScreen();
+    mainWindow.setFullScreen(!isFs);
+    // mpvWindow syncs via the resize listener
+    return !isFs;
+  });
+
+  ipcMain.handle("mpv:is-fullscreen", () => {
+    return mainWindow?.isFullScreen() ?? false;
   });
 
   // ---- Window controls ----
