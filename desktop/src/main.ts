@@ -134,6 +134,9 @@ function createMpvWindow(): BrowserWindow | null {
 
   // Transparent page so Chromium's compositor doesn't cover mpv
   win.loadURL("data:text/html,<html style='background:transparent'><body></body></html>");
+
+  // Let all mouse/keyboard input pass through to mpv's native surface
+  win.setIgnoreMouseEvents(true);
   win.show();
 
   const handle = win.getNativeWindowHandle();
