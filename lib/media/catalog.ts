@@ -5,6 +5,32 @@ import { getOnePaceDetail } from "./custom/one-pace";
 import { getTmdbDetail, getTrendingAnime, getTrendingTmdb, searchTmdb } from "./tmdb";
 import type { MediaDetail, MediaSearchItem } from "./types";
 
+/** All custom entries available for search and browse. */
+function getCustomEntries(): MediaSearchItem[] {
+  const op = getOnePaceDetail();
+  return [
+    {
+      id: op.id,
+      provider: op.provider,
+      kind: op.kind,
+      title: op.title,
+      description: op.description,
+      posterUrl: op.posterUrl,
+      year: op.year,
+      genres: op.genres,
+    },
+  ];
+}
+
+function searchCustomEntries(query: string): MediaSearchItem[] {
+  const q = query.toLowerCase();
+  return getCustomEntries().filter(
+    (e) =>
+      e.title.toLowerCase().includes(q) ||
+      e.description?.toLowerCase().includes(q),
+  );
+}
+
 export async function getHomeCatalog() {
   const [anime, shows, movies] = await Promise.all([
     getTrendingAnime().catch(() => []),
@@ -20,7 +46,11 @@ export async function getHomeCatalog() {
 }
 
 export async function searchCatalog(query: string) {
-  return searchTmdb(query).catch(() => []);
+  const [tmdbResults, customResults] = await Promise.all([
+    searchTmdb(query).catch(() => []),
+    Promise.resolve(searchCustomEntries(query)),
+  ]);
+  return [...customResults, ...tmdbResults];
 }
 
 export async function getMediaDetail(
@@ -50,5 +80,6 @@ export async function getMediaDetail(
 }
 
 export function getMediaHref(item: Pick<MediaSearchItem, "provider" | "id" | "kind">): string {
+  if (item.provider === "custom") return `/title/custom/${item.id}`;
   return `/title/tmdb/${item.id}?kind=${item.kind}`;
 }
