@@ -41,7 +41,7 @@ type BackendTrackOption = {
 };
 
 type WatchPlayerProps = {
-  storageKey: string;
+  resumeTime?: number;
   sessionKey?: string;
   title: string;
   streamUrl: string;
@@ -67,17 +67,6 @@ type WatchPlayerProps = {
   restrictForwardSeeksToBuffered?: boolean;
 };
 
-type StoredProgress = {
-  title: string;
-  currentTime: number;
-  duration: number;
-  updatedAt: string;
-  posterUrl?: string;
-  episodeNumber?: number;
-  episodeTotal?: number;
-  sessionKey?: string;
-  selectedExternalAudioLabel?: string;
-};
 
 type HTMLVideoElementWithAudioTracks = HTMLVideoElement & {
   audioTracks?: ArrayLike<{ enabled: boolean; label?: string; language?: string }> & EventTarget;
@@ -104,38 +93,7 @@ function fmt(s: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function readProgress(key: string): StoredProgress | null {
-  try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; } catch { return null; }
-}
 
-function looksLikeTorrentTitle(value?: string | null): boolean {
-  if (!value) return false;
-
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-
-  return (
-    /\.[a-z0-9]{2,4}$/i.test(trimmed) ||
-    /(?:bluray|brrip|webrip|web-dl|hdtv|x264|x265|hevc|aac|10bit|2160p|1080p|720p)/i.test(trimmed) ||
-    (trimmed.includes(".") && !trimmed.includes(" "))
-  );
-}
-
-function resolvePreferredTitle(currentTitle: string, savedTitle?: string): string {
-  if (!savedTitle) {
-    return currentTitle;
-  }
-
-  if (!currentTitle) {
-    return savedTitle;
-  }
-
-  if (looksLikeTorrentTitle(currentTitle) && !looksLikeTorrentTitle(savedTitle)) {
-    return savedTitle;
-  }
-
-  return currentTitle;
-}
 
 function waitForAudioReady(audio: HTMLAudioElement, timeoutMs = 15_000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -197,23 +155,6 @@ async function safePlay(
   }
 }
 
-function writeProgress(key: string, p: StoredProgress) {
-  try {
-    const existing = readProgress(key);
-    const resolvedTitle = resolvePreferredTitle(p.title, existing?.title);
-    const next: StoredProgress = {
-      ...existing,
-      ...p,
-      title: resolvedTitle || existing?.title || "Untitled",
-      posterUrl: p.posterUrl || existing?.posterUrl,
-      episodeNumber: p.episodeNumber ?? existing?.episodeNumber,
-      episodeTotal: p.episodeTotal ?? existing?.episodeTotal,
-      sessionKey: p.sessionKey ?? existing?.sessionKey,
-    };
-
-    localStorage.setItem(key, JSON.stringify(next));
-  } catch {}
-}
 
 function sendClientDebug(scope: string, message: string, details: Record<string, unknown> = {}) {
   try {
@@ -405,7 +346,7 @@ function IconFullscreen({ isFs, size = 20 }: { isFs: boolean; size?: number }) {
 }
 
 export function WatchPlayer({
-  storageKey,
+  resumeTime,
   sessionKey,
   title,
   streamUrl,
@@ -444,8 +385,7 @@ export function WatchPlayer({
   const assRendererRef = useRef<AssRendererInstance | null>(null);
   const pgsRendererRef = useRef<PgsRendererInstance | null>(null);
 
-  const [saved] = useState(() => readProgress(storageKey));
-  const hasResumePoint = Boolean(saved?.currentTime && saved.currentTime > 5);
+  const hasResumePoint = Boolean(resumeTime && resumeTime > 5);
   const [restored, setRestored] = useState(false);
   const [resumeReady, setResumeReady] = useState(!hasResumePoint);
   const [playing, setPlaying] = useState(false);
@@ -468,9 +408,9 @@ export function WatchPlayer({
   const [trackLoadingVisible, setTrackLoadingVisible] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(4);
 
-  const effectiveTitle = resolvePreferredTitle(title, saved?.title);
-  const effectiveEpisodeNumber = episodeNumber ?? saved?.episodeNumber;
-  const effectiveEpisodeTotal = episodeTotal ?? saved?.episodeTotal;
+  const effectiveTitle = title;
+  const effectiveEpisodeNumber = episodeNumber;
+  const effectiveEpisodeTotal = episodeTotal;
   const textSubtitleSources = useMemo(
     () => subtitles.filter((subtitle) => subtitle.format === undefined || subtitle.format === "text"),
     [subtitles],
@@ -735,10 +675,10 @@ export function WatchPlayer({
         subtitlePropCount: textSubtitleSources.length,
       });
       sync();
-      if (!restored && hasResumePoint && saved?.currentTime) {
+      if (!restored && hasResumePoint && resumeTime) {
         const safe = Number.isFinite(video.duration) && video.duration > 0
-          ? Math.min(saved.currentTime, video.duration - 3)
-          : saved.currentTime;
+          ? Math.min(resumeTime, video.duration - 3)
+          : resumeTime;
         restorePendingRef.current = true;
         video.currentTime = safe;
         setCurrentTime(safe);
@@ -764,34 +704,12 @@ export function WatchPlayer({
       externalAudio?.pause();
       if (!p) return;
       setPlaying(false);
-      if (p.currentTime > 0) writeProgress(storageKey, {
-        title: effectiveTitle,
-        currentTime: p.currentTime,
-        duration: Number.isFinite(p.duration) ? p.duration : 0,
-        updatedAt: new Date().toISOString(),
-        posterUrl,
-        episodeNumber: effectiveEpisodeNumber,
-        episodeTotal: effectiveEpisodeTotal,
-        sessionKey,
-        selectedExternalAudioLabel: selectedExternalAudioLabel ?? undefined,
-      });
       setShowControls(true);
     }
     function onEnded() {
       const externalAudio = externalAudioRef.current;
       externalAudio?.pause();
       externalAudio?.removeAttribute("src");
-      writeProgress(storageKey, {
-        title: effectiveTitle,
-        currentTime: 0,
-        duration: 0,
-        updatedAt: new Date().toISOString(),
-        posterUrl,
-        episodeNumber: effectiveEpisodeNumber,
-        episodeTotal: effectiveEpisodeTotal,
-        sessionKey,
-        selectedExternalAudioLabel: selectedExternalAudioLabel ?? undefined,
-      });
       setPlaying(false);
       setShowControls(true);
     }
@@ -879,23 +797,7 @@ export function WatchPlayer({
     (video as HTMLVideoElementWithAudioTracks).audioTracks?.addEventListener("addtrack", onAudioTrackListChange);
     (video as HTMLVideoElementWithAudioTracks).audioTracks?.addEventListener("removetrack", onAudioTrackListChange);
 
-    const interval = window.setInterval(() => {
-      if (!video.paused && video.currentTime > 0)
-        writeProgress(storageKey, {
-          title: effectiveTitle,
-          currentTime: video.currentTime,
-          duration: Number.isFinite(video.duration) ? video.duration : 0,
-          updatedAt: new Date().toISOString(),
-          posterUrl,
-          episodeNumber: effectiveEpisodeNumber,
-          episodeTotal: effectiveEpisodeTotal,
-          sessionKey,
-          selectedExternalAudioLabel: selectedExternalAudioLabel ?? undefined,
-        });
-    }, 5000);
-
     return () => {
-      window.clearInterval(interval);
       video.removeEventListener("loadedmetadata", onMeta);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
@@ -913,21 +815,8 @@ export function WatchPlayer({
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("addtrack", onAudioTrackListChange);
       (video as HTMLVideoElementWithAudioTracks).audioTracks?.removeEventListener("removetrack", onAudioTrackListChange);
     };
-  }, [restored, saved, storageKey, textSubtitleSources, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId, sessionKey, selectedExternalAudioLabel, streamUrl]);
+  }, [restored, resumeTime, textSubtitleSources, effectiveTitle, posterUrl, effectiveEpisodeNumber, effectiveEpisodeTotal, preferredSubtitleLabel, muted, selectedExternalAudioId, sessionKey, selectedExternalAudioLabel, streamUrl]);
 
-  useEffect(() => {
-    if (selectedExternalAudioId !== null || !saved?.selectedExternalAudioLabel || externalAudioTracks.length === 0) {
-      return;
-    }
-
-    const matchedTrack = externalAudioTracks.find(
-      (track) => track.label === saved.selectedExternalAudioLabel,
-    );
-
-    if (matchedTrack) {
-      onSelectExternalAudio?.(matchedTrack.id);
-    }
-  }, [externalAudioTracks, onSelectExternalAudio, saved?.selectedExternalAudioLabel, selectedExternalAudioId]);
 
   useEffect(() => {
     const video = playerRef.current;

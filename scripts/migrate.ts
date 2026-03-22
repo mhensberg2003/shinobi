@@ -53,6 +53,34 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS watch_sessions (
+      session_key       TEXT PRIMARY KEY,
+      magnet_link       TEXT NOT NULL DEFAULT '',
+      file_index        INTEGER NOT NULL DEFAULT -1,
+      torrent_hash      TEXT,
+      source_provider   TEXT,
+      source_id         TEXT,
+      source_link       TEXT,
+      source_url        TEXT,
+      title             TEXT,
+      poster_url        TEXT,
+      episode_number    INTEGER,
+      episode_total     INTEGER,
+      progress_seconds  DOUBLE PRECISION,
+      duration_seconds  DOUBLE PRECISION,
+      active_in_player  BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      cleanup_after     TIMESTAMPTZ NOT NULL,
+      removed_at        TIMESTAMPTZ
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS watch_sessions_cleanup_after_idx ON watch_sessions(cleanup_after)`;
+  await sql`CREATE INDEX IF NOT EXISTS watch_sessions_updated_at_idx ON watch_sessions(updated_at DESC)`;
+
   console.log("Migration complete.");
   console.log("");
   console.log("Create your first user:");

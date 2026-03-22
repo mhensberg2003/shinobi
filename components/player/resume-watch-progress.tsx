@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { BackendAutoResolveStatus, BackendWatchSession } from "@/lib/media-backend/types";
 
@@ -9,14 +9,17 @@ type ResumeWatchProgressProps = {
   sessionKey: string;
 };
 
-type StoredMeta = {
+type SessionMeta = {
   title?: string;
   posterUrl?: string;
   episodeNumber?: number;
   episodeTotal?: number;
-  currentTime?: number;
-  duration?: number;
-  sessionKey?: string;
+};
+
+type SessionResponse = {
+  ok: boolean;
+  session?: BackendWatchSession;
+  error?: string;
 };
 
 type ResolveResponse = {
@@ -68,24 +71,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function readStoredMeta(sessionKey: string): StoredMeta | null {
-  try {
-    const raw = localStorage.getItem(`shinobi:watch-session:${sessionKey}`);
-    if (raw) return JSON.parse(raw) as StoredMeta;
-  } catch {}
-
-  // Also check old-style keys that reference this sessionKey
-  for (const [key, value] of Object.entries(localStorage)) {
-    if (!key.startsWith("shinobi:watch:")) continue;
-    try {
-      const parsed = JSON.parse(value) as StoredMeta;
-      if (parsed.sessionKey === sessionKey) return parsed;
-    } catch {}
-  }
-
-  return null;
-}
-
 function buildWatchTarget(session: BackendWatchSession): string {
   const hash = session.torrentHash ?? "unknown";
   const params = new URLSearchParams({
@@ -124,13 +109,29 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
   const router = useRouter();
   const [phase, setPhase] = useState<string>("reconnecting");
   const [error, setError] = useState<string | null>(null);
+  const [meta, setMeta] = useState<SessionMeta | null>(null);
 
-  const storedMeta = useMemo(() => readStoredMeta(sessionKey), [sessionKey]);
+  // Load session metadata for display
+  useEffect(() => {
+    fetch(`/api/media-backend/watch-sessions/${encodeURIComponent(sessionKey)}`)
+      .then((r) => r.json())
+      .then((data: SessionResponse) => {
+        if (data.ok && data.session) {
+          setMeta({
+            title: data.session.title,
+            posterUrl: data.session.posterUrl,
+            episodeNumber: data.session.episodeNumber,
+            episodeTotal: data.session.episodeTotal,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [sessionKey]);
 
   const displayTitle =
-    storedMeta?.episodeNumber != null
-      ? `${storedMeta.title ?? "Untitled"} \u00b7 Episode ${storedMeta.episodeNumber}`
-      : storedMeta?.title ?? "Untitled";
+    meta?.episodeNumber != null
+      ? `${meta.title ?? "Untitled"} · Episode ${meta.episodeNumber}`
+      : meta?.title ?? "Untitled";
 
   const progressValue = PHASE_PROGRESS[phase] ?? 10;
   const phaseLabel = PHASE_LABELS[phase] ?? null;
@@ -153,7 +154,6 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
         const resolved = payload.ok ? payload.resolution?.session : null;
 
         if (resolved?.sourceUrl) {
-          // Session still alive — navigate directly
           setPhase("buffering");
           await sleep(600);
           if (cancelled) return;
@@ -169,7 +169,7 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
         }
 
         // Step 2: Session is stale — fall back to auto-resolve
-        if (!storedMeta?.title) {
+        if (!meta?.title) {
           throw new Error("Session expired and no metadata available to re-resolve.");
         }
 
@@ -183,11 +183,11 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             requestKey,
-            title: storedMeta.title,
+            title: meta.title,
             alternateTitles: [],
-            episodeNumber: storedMeta.episodeNumber,
-            episodeTotal: storedMeta.episodeTotal,
-            posterUrl: storedMeta.posterUrl,
+            episodeNumber: meta.episodeNumber,
+            episodeTotal: meta.episodeTotal,
+            posterUrl: meta.posterUrl,
           }),
         });
 
@@ -240,13 +240,13 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
     return () => {
       cancelled = true;
     };
-  }, [sessionKey, storedMeta, router]);
+  }, [sessionKey, meta, router]);
 
   return (
     <main className="fixed inset-0 flex items-center justify-center bg-[#0a0a0a]">
-      {storedMeta?.posterUrl ? (
+      {meta?.posterUrl ? (
         <img
-          src={storedMeta.posterUrl}
+          src={meta.posterUrl}
           alt=""
           className="pointer-events-none absolute inset-0 h-full w-full object-cover"
           style={{ opacity: 0.06, filter: "blur(40px) saturate(1.2)" }}
@@ -254,7 +254,6 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
       ) : null}
 
       <div className="relative z-10 flex w-full max-w-sm flex-col items-center px-6">
-        {/* Progress bar */}
         {phase !== "error" ? (
           <div className="w-full">
             <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/[0.06]">
@@ -266,12 +265,10 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
           </div>
         ) : null}
 
-        {/* Phase label */}
         {phase !== "error" && phaseLabel ? (
           <p className="mt-5 text-[13px] font-medium text-white/60">{phaseLabel}</p>
         ) : null}
 
-        {/* Error state */}
         {phase === "error" ? (
           <>
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500/10">
@@ -284,12 +281,10 @@ export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
           </>
         ) : null}
 
-        {/* Title */}
         <p className="mt-4 max-w-[300px] truncate text-center text-[12px] text-white/25">
           {displayTitle}
         </p>
 
-        {/* Back button on error */}
         {phase === "error" ? (
           <button
             type="button"

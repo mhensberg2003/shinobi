@@ -1,0 +1,12 @@
+http://188.245.226.225 {
+    # Backend API at /api/*
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy 127.0.0.1:9241
+    }
+
+    # Frontend (Next.js) — everything else
+    handle {
+        reverse_proxy 127.0.0.1:7823
+    }
+}

@@ -40,7 +40,7 @@ type InspectableStream = {
 };
 
 type WatchPageShellProps = {
-  storageKey: string;
+  resumeTime?: number;
   sessionKey?: string;
   title: string;
   streamUrl: string;
@@ -156,7 +156,7 @@ function useIsElectron() {
 }
 
 export function WatchPageShell({
-  storageKey,
+  resumeTime,
   sessionKey,
   title,
   streamUrl,
@@ -579,7 +579,7 @@ export function WatchPageShell({
     const mpvStreamUrl = demuxRequest?.sourceUrl ?? streamUrl;
     return (
       <MpvPlayer
-        storageKey={storageKey}
+        resumeTime={resumeTime}
         sessionKey={sessionKey}
         title={title}
         streamUrl={mpvStreamUrl}
@@ -596,7 +596,7 @@ export function WatchPageShell({
   return (
     <>
       <WatchPlayer
-        storageKey={storageKey}
+        resumeTime={resumeTime}
         sessionKey={sessionKey}
         title={title}
         streamUrl={streamUrl}

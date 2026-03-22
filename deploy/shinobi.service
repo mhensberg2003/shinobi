@@ -1,0 +1,22 @@
+[Unit]
+Description=Shinobi Frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shinobi
+Group=shinobi
+WorkingDirectory=/opt/shinobi
+Environment=NODE_ENV=production
+Environment=PORT=7823
+Environment=HOSTNAME=0.0.0.0
+EnvironmentFile=/etc/shinobi/shinobi.env
+ExecStart=/usr/bin/node /opt/shinobi/.next/standalone/server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -52,7 +52,7 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
     <WatchPageShell
       requiresStreamPreparation={false}
       restrictForwardSeeksToBuffered={false}
-      storageKey={`shinobi:watch-session:${resolvedSession.sessionKey}`}
+      resumeTime={resolvedSession.progressSeconds ?? undefined}
       sessionKey={resolvedSession.sessionKey}
       title={title ?? resolvedSession.title ?? "Untitled"}
       streamUrl={`/api/media-backend/watch-sessions/stream?sessionKey=${encodeURIComponent(resolvedSession.sessionKey)}`}
