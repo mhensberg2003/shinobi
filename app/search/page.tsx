@@ -34,11 +34,16 @@ export default async function SearchPage({ searchParams }: PageProps) {
       </form>
 
       {results.length > 0 && (
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))" }}>
-          {results.map((item) => (
+        <>
+          {results.filter((i) => i.posterIsLogo).map((item) => (
             <MediaCard key={`${item.provider}-${item.id}`} item={item} />
           ))}
-        </div>
+          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))" }}>
+            {results.filter((i) => !i.posterIsLogo).map((item) => (
+              <MediaCard key={`${item.provider}-${item.id}`} item={item} />
+            ))}
+          </div>
+        </>
       )}
 
       {query && results.length === 0 && (
