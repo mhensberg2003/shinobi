@@ -165,6 +165,7 @@ export function Nav() {
           <div className="max-h-[420px] overflow-auto rounded-b-xl border border-white/12 border-t-white/6" style={{ background: "rgba(18,18,18,0.97)", scrollbarWidth: "none" }}>
             {results.map((item) => {
               const href = `/title/${item.provider}/${item.id}${item.provider === "tmdb" ? `?kind=${item.kind}` : ""}`;
+              const isLogo = item.posterIsLogo;
               return (
                 <Link
                   key={`${item.provider}-${item.id}`}
@@ -172,9 +173,15 @@ export function Nav() {
                   onClick={close}
                   className="flex items-center gap-3 px-3.5 py-2.5 border-b border-white/5 hover:bg-white/6 transition-colors duration-100"
                 >
-                  <div className="w-9 h-[54px] rounded-[5px] overflow-hidden bg-[#2a2a2a] shrink-0">
-                    {item.posterUrl && <img src={item.posterUrl} alt="" className="w-full h-full object-cover" />}
-                  </div>
+                  {isLogo ? (
+                    <div className="h-10 w-28 shrink-0 flex items-center">
+                      {item.posterUrl && <img src={item.posterUrl} alt="" className="h-full w-auto object-contain" />}
+                    </div>
+                  ) : (
+                    <div className="w-9 h-[54px] rounded-[5px] overflow-hidden bg-[#2a2a2a] shrink-0">
+                      {item.posterUrl && <img src={item.posterUrl} alt="" className="w-full h-full object-cover" />}
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-medium text-white truncate">{item.title}</p>
                     <p className="text-[11px] text-white/40 mt-0.5">
