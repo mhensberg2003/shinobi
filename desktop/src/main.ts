@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-const DEV_SERVER_URL = "http://localhost:3000";
+const DEV_SERVER_URL = "http://188.245.226.225:7823";
 const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
 let mpvPath = "mpv";
