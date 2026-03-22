@@ -60,6 +60,10 @@ export function MpvPlayer({
       if (active) setStatus("ended");
     });
 
+    const unsubBack = mpv.onBack(() => {
+      if (active) router.back();
+    });
+
     const unsubProgress = mpv.onProgress((data) => {
       if (active) setProgress(data);
     });
@@ -67,6 +71,7 @@ export function MpvPlayer({
     return () => {
       active = false;
       unsubEnded();
+      unsubBack();
       unsubProgress();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

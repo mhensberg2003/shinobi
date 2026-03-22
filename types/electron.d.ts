@@ -11,12 +11,14 @@ interface MpvTrack {
 interface ElectronMpvAPI {
   spawn(streamUrl: string, options?: { startTime?: number }): Promise<{ ok: boolean; embedded: boolean }>;
   quit(): Promise<void>;
+  back(): Promise<void>;
   command(args: unknown[]): Promise<{ ok?: boolean; data?: unknown; error?: string }>;
   getProperty(name: string): Promise<unknown>;
   setProperty(name: string, value: unknown): Promise<{ ok?: boolean; error?: string }>;
   toggleFullscreen(): Promise<boolean>;
   isFullscreen(): Promise<boolean>;
   getTracks(): Promise<MpvTrack[]>;
+  onBack(callback: () => void): () => void;
   onEnded(callback: () => void): () => void;
   onProgress(callback: (data: { currentTime: number; duration: number; paused: boolean }) => void): () => void;
 }

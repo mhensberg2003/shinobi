@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return ipcRenderer.invoke("mpv:quit");
     },
 
+    back(): Promise<void> {
+      return ipcRenderer.invoke("mpv:back");
+    },
+
     command(args: unknown[]): Promise<{ ok?: boolean; data?: unknown; error?: string }> {
       return ipcRenderer.invoke("mpv:command", args);
     },
@@ -49,6 +53,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       external?: boolean;
     }>> {
       return ipcRenderer.invoke("mpv:get-tracks");
+    },
+
+    onBack(callback: () => void): () => void {
+      const handler = () => callback();
+      ipcRenderer.on("mpv:back", handler);
+      return () => { ipcRenderer.removeListener("mpv:back", handler); };
     },
 
     onEnded(callback: () => void): () => void {

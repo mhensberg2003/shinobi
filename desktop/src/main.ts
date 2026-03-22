@@ -221,11 +221,25 @@ const PLAYER_OVERLAY_HTML = `<!DOCTYPE html>
   .track-dot { width:6px; height:6px; border-radius:50%; background:transparent; flex-shrink:0; }
   .track-item.active .track-dot { background:#e50914; }
 
-  .title-bar { position:fixed; top:0; left:0; right:0; padding:14px 18px; background:linear-gradient(rgba(0,0,0,0.7), transparent); opacity:0; transition:opacity 0.25s; font-size:14px; font-weight:500; }
+  .title-bar {
+    position:fixed; top:0; left:0; right:0; padding:14px 18px;
+    background:linear-gradient(rgba(0,0,0,0.7), transparent);
+    opacity:0; transition:opacity 0.25s; display:flex; align-items:center; gap:12px;
+  }
   body.show-cursor .title-bar { opacity:1; }
+  .back-btn {
+    background:none; border:none; color:#fff; cursor:pointer; padding:6px;
+    border-radius:50%; display:flex; align-items:center; opacity:0.85; transition:background 0.15s;
+  }
+  .back-btn:hover { opacity:1; background:rgba(255,255,255,0.1); }
+  .back-btn svg { width:22px; height:22px; }
 </style></head>
 <body>
-  <div class="title-bar" id="titleBar"></div>
+  <div class="title-bar" id="titleBar">
+    <button class="back-btn" id="backBtn" title="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
+    </button>
+  </div>
 
   <div class="controls">
     <div class="seek-row">
@@ -252,9 +266,6 @@ const PLAYER_OVERLAY_HTML = `<!DOCTYPE html>
       </button>
       <button class="btn" id="fsBtn" title="Fullscreen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15,3 21,3 21,9"/><polyline points="9,21 3,21 3,15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-      </button>
-      <button class="btn" id="exitBtn" title="Exit player">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
   </div>
@@ -320,9 +331,9 @@ document.getElementById("fsBtn").onclick = () => {
   api.toggleFullscreen();
 };
 
-// --- Exit ---
-document.getElementById("exitBtn").onclick = () => {
-  api.quit();
+// --- Back ---
+document.getElementById("backBtn").onclick = () => {
+  api.back();
 };
 
 // --- Track menus ---
@@ -388,7 +399,7 @@ document.addEventListener("keydown", (e) => {
     case "ArrowDown": volume = Math.max(0, volume - 5); api.setProperty("volume", volume); document.getElementById("volFill").style.width = volume+"%"; break;
     case "m": api.command(["cycle", "mute"]); muted = !muted; break;
     case "f": api.toggleFullscreen(); break;
-    case "Escape": api.quit(); break;
+    case "Escape": api.back(); break;
     case "j": api.command(["cycle", "sub"]); loadTracks(); break;
     case "J": api.command(["cycle", "sub", "down"]); loadTracks(); break;
     case "#": api.command(["cycle", "audio"]); loadTracks(); break;
@@ -748,6 +759,13 @@ function registerIpc() {
   });
 
   // ---- Window controls ----
+  // ---- Exit player and navigate back in the main window ----
+  ipcMain.handle("mpv:back", () => {
+    killMpv(false);
+    // Tell the main window's renderer to go back
+    mainWindow?.webContents.send("mpv:back");
+  });
+
   // ---- Toggle fullscreen (controls both main + mpv overlay windows) ----
   ipcMain.handle("mpv:toggle-fullscreen", () => {
     if (!mainWindow) return false;
