@@ -761,8 +761,10 @@ function registerIpc() {
   // ---- Window controls ----
   // ---- Exit player and navigate back in the main window ----
   ipcMain.handle("mpv:back", () => {
+    if (mainWindow?.isFullScreen()) {
+      mainWindow.setFullScreen(false);
+    }
     killMpv(false);
-    // Tell the main window's renderer to go back
     mainWindow?.webContents.send("mpv:back");
   });
 
