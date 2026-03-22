@@ -1,12 +1,22 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import type { BackendWatchSession } from "@/lib/media-backend/types";
+import type { BackendAutoResolveStatus, BackendWatchSession } from "@/lib/media-backend/types";
 
 type ResumeWatchProgressProps = {
-  session: BackendWatchSession;
+  sessionKey: string;
+};
+
+type StoredMeta = {
+  title?: string;
+  posterUrl?: string;
+  episodeNumber?: number;
+  episodeTotal?: number;
+  currentTime?: number;
+  duration?: number;
+  sessionKey?: string;
 };
 
 type ResolveResponse = {
@@ -18,98 +28,205 @@ type ResolveResponse = {
   error?: string;
 };
 
+type AutoResolveStatusResponse = {
+  ok: boolean;
+  status?: BackendAutoResolveStatus;
+  error?: string;
+};
+
+const PHASE_PROGRESS: Partial<Record<string, number>> = {
+  reconnecting: 20,
+  searching: 30,
+  ranking: 42,
+  "trying-candidate": 54,
+  "fetching-metadata": 62,
+  "picking-file": 70,
+  "selecting-file": 76,
+  "waiting-for-playable": 82,
+  buffering: 88,
+  probing: 94,
+  finalizing: 97,
+  ready: 97,
+};
+
+const PHASE_LABELS: Partial<Record<string, string>> = {
+  reconnecting: "Reconnecting",
+  searching: "Searching",
+  ranking: "Ranking results",
+  "trying-candidate": "Trying source",
+  "fetching-metadata": "Fetching metadata",
+  "picking-file": "Selecting file",
+  "selecting-file": "Selecting file",
+  "waiting-for-playable": "Buffering",
+  buffering: "Buffering",
+  probing: "Almost ready",
+  finalizing: "Opening player",
+  ready: "Opening player",
+};
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function readStoredMeta(sessionKey: string): StoredMeta | null {
+  try {
+    const raw = localStorage.getItem(`shinobi:watch-session:${sessionKey}`);
+    if (raw) return JSON.parse(raw) as StoredMeta;
+  } catch {}
+
+  // Also check old-style keys that reference this sessionKey
+  for (const [key, value] of Object.entries(localStorage)) {
+    if (!key.startsWith("shinobi:watch:")) continue;
+    try {
+      const parsed = JSON.parse(value) as StoredMeta;
+      if (parsed.sessionKey === sessionKey) return parsed;
+    } catch {}
+  }
+
+  return null;
+}
+
 function buildWatchTarget(session: BackendWatchSession): string {
   const hash = session.torrentHash ?? "unknown";
   const params = new URLSearchParams({
     file: String(session.fileIndex),
     session: session.sessionKey,
   });
-
-  if (session.posterUrl) {
-    params.set("poster", session.posterUrl);
-  }
-  if (session.title) {
-    params.set("title", session.title);
-  }
-  if (session.episodeNumber != null) {
-    params.set("ep", String(session.episodeNumber));
-  }
-  if (session.episodeTotal != null) {
-    params.set("eps", String(session.episodeTotal));
-  }
-
+  if (session.posterUrl) params.set("poster", session.posterUrl);
+  if (session.title) params.set("title", session.title);
+  if (session.episodeNumber != null) params.set("ep", String(session.episodeNumber));
+  if (session.episodeTotal != null) params.set("eps", String(session.episodeTotal));
   return `/watch/${hash}?${params.toString()}`;
 }
 
-export function ResumeWatchProgress({ session }: ResumeWatchProgressProps) {
+function navigateToWatch(router: ReturnType<typeof useRouter>, target: string) {
+  router.replace(target);
+  window.setTimeout(() => {
+    const targetPathname = new URL(target, window.location.origin).pathname;
+    if (window.location.pathname !== targetPathname) {
+      window.location.assign(target);
+    }
+  }, 3000);
+}
+
+async function pollAutoResolveStatus(requestKey: string): Promise<BackendAutoResolveStatus | null> {
+  const response = await fetch(
+    `/api/media-backend/watch/auto-resolve/status?requestKey=${encodeURIComponent(requestKey)}`,
+    { cache: "no-store" },
+  );
+  if (response.status === 404) return null;
+  const payload = (await response.json()) as AutoResolveStatusResponse;
+  if (!response.ok || !payload.ok) throw new Error(payload.error ?? "Failed to read status.");
+  return payload.status ?? null;
+}
+
+export function ResumeWatchProgress({ sessionKey }: ResumeWatchProgressProps) {
   const router = useRouter();
-  const [phase, setPhase] = useState<"reconnecting" | "buffering" | "ready" | "error">("reconnecting");
+  const [phase, setPhase] = useState<string>("reconnecting");
   const [error, setError] = useState<string | null>(null);
 
+  const storedMeta = useMemo(() => readStoredMeta(sessionKey), [sessionKey]);
+
   const displayTitle =
-    session.episodeNumber != null
-      ? `${session.title ?? "Untitled"} \u00b7 Episode ${session.episodeNumber}`
-      : session.title ?? "Untitled";
+    storedMeta?.episodeNumber != null
+      ? `${storedMeta.title ?? "Untitled"} \u00b7 Episode ${storedMeta.episodeNumber}`
+      : storedMeta?.title ?? "Untitled";
 
-  const progressValue =
-    phase === "reconnecting" ? 30 :
-    phase === "buffering" ? 70 :
-    phase === "ready" ? 97 :
-    100;
-
-  const phaseLabel =
-    phase === "reconnecting" ? "Reconnecting" :
-    phase === "buffering" ? "Buffering" :
-    phase === "ready" ? "Opening player" :
-    null;
+  const progressValue = PHASE_PROGRESS[phase] ?? 10;
+  const phaseLabel = PHASE_LABELS[phase] ?? null;
 
   useEffect(() => {
     let cancelled = false;
 
     async function resume() {
       try {
+        // Step 1: Try resolving the existing session
         const response = await fetch("/api/media-backend/watch-sessions/resolve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionKey: session.sessionKey }),
+          body: JSON.stringify({ sessionKey }),
         });
 
         if (cancelled) return;
 
         const payload = (await response.json()) as ResolveResponse;
+        const resolved = payload.ok ? payload.resolution?.session : null;
 
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.error ?? "Failed to reconnect to source.");
+        if (resolved?.sourceUrl) {
+          // Session still alive — navigate directly
+          setPhase("buffering");
+          await sleep(600);
+          if (cancelled) return;
+
+          setPhase("ready");
+          const target = buildWatchTarget(resolved);
+          router.prefetch(target);
+          await sleep(300);
+          if (cancelled) return;
+
+          navigateToWatch(router, target);
+          return;
         }
 
-        const resolved = payload.resolution?.session;
-        if (!resolved?.sourceUrl) {
-          throw new Error("Source is no longer available.");
+        // Step 2: Session is stale — fall back to auto-resolve
+        if (!storedMeta?.title) {
+          throw new Error("Session expired and no metadata available to re-resolve.");
         }
 
         if (cancelled) return;
+        setPhase("searching");
 
-        setPhase("buffering");
+        const requestKey = `resume-${sessionKey}-${Date.now()}`;
 
-        await new Promise((r) => window.setTimeout(r, 800));
+        const autoResponse = await fetch("/api/media-backend/watch/auto-resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestKey,
+            title: storedMeta.title,
+            alternateTitles: [],
+            episodeNumber: storedMeta.episodeNumber,
+            episodeTotal: storedMeta.episodeTotal,
+            posterUrl: storedMeta.posterUrl,
+          }),
+        });
+
         if (cancelled) return;
 
-        setPhase("ready");
+        if (!autoResponse.ok) {
+          const err = (await autoResponse.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(err?.error ?? "Failed to start auto-resolve.");
+        }
 
-        const target = buildWatchTarget(resolved);
-        router.prefetch(target);
+        // Step 3: Poll auto-resolve status
+        while (!cancelled) {
+          const status = await pollAutoResolveStatus(requestKey);
+          if (cancelled) return;
 
-        await new Promise((r) => window.setTimeout(r, 300));
-        if (cancelled) return;
+          if (status) {
+            if (status.phase !== "completed" && status.phase !== "failed") {
+              setPhase(status.phase);
+            }
 
-        router.replace(target);
+            if (status.phase === "failed") {
+              throw new Error(status.error ?? status.message ?? "Failed to find a source.");
+            }
 
-        window.setTimeout(() => {
-          const targetPathname = new URL(target, window.location.origin).pathname;
-          if (window.location.pathname !== targetPathname) {
-            window.location.assign(target);
+            if (status.phase === "completed" && status.resolution?.session.torrentHash) {
+              const session = status.resolution.session;
+              setPhase("finalizing");
+              const target = buildWatchTarget(session);
+              router.prefetch(target);
+              await sleep(300);
+              if (cancelled) return;
+
+              navigateToWatch(router, target);
+              return;
+            }
           }
-        }, 3000);
+
+          await sleep(1500);
+        }
       } catch (err) {
         if (!cancelled) {
           setPhase("error");
@@ -123,13 +240,13 @@ export function ResumeWatchProgress({ session }: ResumeWatchProgressProps) {
     return () => {
       cancelled = true;
     };
-  }, [session.sessionKey, router]);
+  }, [sessionKey, storedMeta, router]);
 
   return (
     <main className="fixed inset-0 flex items-center justify-center bg-[#0a0a0a]">
-      {session.posterUrl ? (
+      {storedMeta?.posterUrl ? (
         <img
-          src={session.posterUrl}
+          src={storedMeta.posterUrl}
           alt=""
           className="pointer-events-none absolute inset-0 h-full w-full object-cover"
           style={{ opacity: 0.06, filter: "blur(40px) saturate(1.2)" }}

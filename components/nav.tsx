@@ -11,8 +11,13 @@ export function Nav() {
   const [results, setResults] = useState<MediaSearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [isElectron, setIsElectron] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsElectron(!!(window as any).electronAPI);
+  }, []);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -62,7 +67,7 @@ export function Nav() {
   function close() { setOpen(false); setQuery(""); setResults([]); }
 
   return (
-    <div ref={wrapRef} className="fixed top-0 left-0 right-0 z-50 flex flex-col items-center pointer-events-none pt-3">
+    <div ref={wrapRef} className="fixed top-0 left-0 right-0 z-50 flex flex-col items-center pointer-events-none" style={{ paddingTop: isElectron ? "44px" : "12px" }}>
       {/* floating pill nav */}
       <nav
         className="pointer-events-auto flex items-center gap-1 h-11 px-1.5 rounded-full transition-all duration-300"

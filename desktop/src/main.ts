@@ -84,6 +84,7 @@ function createWindow() {
     minHeight: 500,
     backgroundColor: "#141414",
     title: "Shinobi",
+    frame: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -228,6 +229,17 @@ function registerIpc() {
 
     return { ok: true };
   });
+
+  ipcMain.handle("window:minimize", () => mainWindow?.minimize());
+  ipcMain.handle("window:maximize", () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow?.maximize();
+    }
+  });
+  ipcMain.handle("window:close", () => mainWindow?.close());
+  ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 
   ipcMain.handle("mpv:quit", () => {
     stopProgressPolling();
