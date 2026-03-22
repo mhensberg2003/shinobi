@@ -27,7 +27,7 @@ export function MpvPlayer({
   const router = useRouter();
   const [status, setStatus] = useState<"launching" | "playing" | "ended" | "error">("launching");
   const [errorMsg, setErrorMsg] = useState("");
-  const [embedded, setEmbedded] = useState(false);
+  const [embedded, setEmbedded] = useState(() => Boolean(typeof window !== "undefined" && window.electronAPI?.isElectron));
   const [progress, setProgress] = useState<{ currentTime: number; duration: number } | null>(null);
 
   const hasResumePoint = Boolean(resumeTime && resumeTime > 5);
