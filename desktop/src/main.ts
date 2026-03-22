@@ -7,6 +7,7 @@ import path from "node:path";
 const DEV_SERVER_URL = "http://188.245.226.225:7823";
 const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
+let mpvWindow: BrowserWindow | null = null;
 let mpvPath = "mpv";
 let mpvProcess: ReturnType<typeof spawn> | null = null;
 let mpvIpc: MpvIpc | null = null;
@@ -86,22 +87,85 @@ function resolveMpvPathSync(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Native window handle for --wid embedding
+// Native window handle helper
 // ---------------------------------------------------------------------------
 
-function getNativeWindowId(): string | null {
-  if (!mainWindow) return null;
-  const handle = mainWindow.getNativeWindowHandle();
+function readNativeHandle(win: BrowserWindow): string {
+  const handle = win.getNativeWindowHandle();
   if (process.platform === "win32") {
-    // HWND — pointer-sized integer (could be 64-bit on 64-bit Windows)
     if (handle.length >= 8) {
-      const big = handle.readBigUInt64LE(0);
-      return big.toString();
+      return handle.readBigUInt64LE(0).toString();
     }
     return handle.readUInt32LE(0).toString();
   }
-  // X11 XID — 32-bit unsigned
   return handle.readUInt32LE(0).toString();
+}
+
+// ---------------------------------------------------------------------------
+// Dedicated child window for mpv video output.
+// A separate BrowserWindow with no web content so mpv's video surface
+// isn't covered by Chromium's compositor.
+// ---------------------------------------------------------------------------
+
+function createMpvWindow(): BrowserWindow | null {
+  if (!mainWindow) return null;
+
+  const bounds = mainWindow.getContentBounds();
+
+  const win = new BrowserWindow({
+    parent: mainWindow,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    focusable: true,
+    skipTaskbar: true,
+    backgroundColor: "#000000",
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // Load blank page — no Chromium content to cover mpv
+  win.loadURL("about:blank");
+  win.show();
+
+  // Keep mpv window in sync when main window moves/resizes
+  const syncBounds = () => {
+    if (win.isDestroyed() || !mainWindow) return;
+    const b = mainWindow.getContentBounds();
+    win.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+  };
+  mainWindow.on("resize", syncBounds);
+  mainWindow.on("move", syncBounds);
+  mainWindow.on("maximize", syncBounds);
+  mainWindow.on("unmaximize", syncBounds);
+  mainWindow.on("restore", syncBounds);
+
+  win.on("closed", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.removeListener("resize", syncBounds);
+      mainWindow.removeListener("move", syncBounds);
+      mainWindow.removeListener("maximize", syncBounds);
+      mainWindow.removeListener("unmaximize", syncBounds);
+      mainWindow.removeListener("restore", syncBounds);
+    }
+  });
+
+  return win;
+}
+
+function destroyMpvWindow() {
+  if (mpvWindow && !mpvWindow.isDestroyed()) {
+    mpvWindow.close();
+  }
+  mpvWindow = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +364,7 @@ function killMpv(notify = true) {
     proc.removeAllListeners("exit");
     try { proc.kill(); } catch {}
   }
+  destroyMpvWindow();
   if (notify && mainWindow) {
     mainWindow.webContents.send("mpv:ended");
   }
@@ -310,12 +375,16 @@ function killMpv(notify = true) {
 // ---------------------------------------------------------------------------
 
 function registerIpc() {
-  // ---- mpv spawn (embedded via --wid) ----
+  // ---- mpv spawn (embedded via --wid in a dedicated child window) ----
   ipcMain.handle("mpv:spawn", async (_event, options: { streamUrl: string; startTime?: number }) => {
     // Kill any existing mpv without notifying renderer
     killMpv(false);
 
-    const wid = getNativeWindowId();
+    // Create a dedicated child window for mpv to render into.
+    // This avoids Chromium's compositor covering the video.
+    mpvWindow = createMpvWindow();
+    const wid = mpvWindow ? readNativeHandle(mpvWindow) : null;
+
     spawnCounter++;
     const pipeName = getMpvPipeName(spawnCounter);
 
@@ -328,7 +397,6 @@ function registerIpc() {
       "--title=Shinobi",
     ];
 
-    // Embed into the Electron window if we can get the native handle
     if (wid) {
       args.push(`--wid=${wid}`);
     } else {
@@ -355,6 +423,7 @@ function registerIpc() {
       stopProgressPolling();
       mpvIpc?.destroy();
       mpvIpc = null;
+      destroyMpvWindow();
       mainWindow?.webContents.send("mpv:ended");
     });
 
@@ -363,6 +432,7 @@ function registerIpc() {
       stopProgressPolling();
       mpvIpc?.destroy();
       mpvIpc = null;
+      destroyMpvWindow();
     });
 
     // Connect to mpv's JSON IPC (retries while mpv starts up)
