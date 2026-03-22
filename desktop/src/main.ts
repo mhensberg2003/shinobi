@@ -221,6 +221,18 @@ const PLAYER_OVERLAY_HTML = `<!DOCTYPE html>
   .track-dot { width:6px; height:6px; border-radius:50%; background:transparent; flex-shrink:0; }
   .track-item.active .track-dot { background:#e50914; }
 
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .loader {
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    transition:opacity 0.3s; pointer-events:none;
+  }
+  .loader.hidden { opacity:0; }
+  .loader-ring {
+    width:36px; height:36px; border-radius:50%;
+    border:2.5px solid rgba(255,255,255,0.1); border-top-color:rgba(255,255,255,0.7);
+    animation:spin 0.8s linear infinite;
+  }
+
   .title-bar {
     position:fixed; top:0; left:0; right:0; padding:14px 18px;
     background:linear-gradient(rgba(0,0,0,0.7), transparent);
@@ -235,6 +247,7 @@ const PLAYER_OVERLAY_HTML = `<!DOCTYPE html>
   .back-btn svg { width:22px; height:22px; }
 </style></head>
 <body>
+  <div class="loader" id="loader"><div class="loader-ring"></div></div>
   <div class="title-bar" id="titleBar">
     <button class="back-btn" id="backBtn" title="Back">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
@@ -288,6 +301,8 @@ function fmt(s) {
 // --- Progress from main process ---
 api.onProgress((d) => {
   currentTime = d.currentTime; dur = d.duration; paused = d.paused;
+  const loader = document.getElementById("loader");
+  if (loader && !loader.classList.contains("hidden")) loader.classList.add("hidden");
   document.getElementById("timePos").textContent = fmt(currentTime);
   document.getElementById("duration").textContent = fmt(dur);
   document.getElementById("seekFill").style.width = dur > 0 ? (currentTime/dur*100)+"%" : "0%";
