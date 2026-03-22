@@ -48,6 +48,7 @@ const PHASE_PROGRESS: Record<BackendAutoResolveStatus["phase"], number> = {
   "selecting-file": 74,
   "waiting-for-playable": 79,
   buffering: 84,
+  downloading: 84,
   probing: 92,
   finalizing: 97,
   completed: 100,
@@ -64,6 +65,7 @@ const PHASE_LABELS: Partial<Record<BackendAutoResolveStatus["phase"], string>> =
   "selecting-file": "Selecting file",
   "waiting-for-playable": "Buffering",
   buffering: "Buffering",
+  downloading: "Downloading",
   probing: "Almost ready",
   finalizing: "Opening player",
 };
@@ -376,7 +378,9 @@ export function AutoResolveProgress({
   }, [backendStatus, elapsedMs, error]);
 
   const phaseLabel = backendStatus?.phase
-    ? PHASE_LABELS[backendStatus.phase] ?? null
+    ? backendStatus.phase === "downloading" && backendStatus.message
+      ? backendStatus.message
+      : PHASE_LABELS[backendStatus.phase] ?? null
     : null;
 
   const displayTitle = episodeNumber != null

@@ -91,6 +91,7 @@ export type BackendAutoResolveStatus = {
     | "selecting-file"
     | "waiting-for-playable"
     | "buffering"
+    | "downloading"
     | "probing"
     | "finalizing"
     | "completed"
@@ -99,7 +100,7 @@ export type BackendAutoResolveStatus = {
   startedAt: string;
   updatedAt: string;
   title?: string;
-  provider?: "anilist" | "tmdb";
+  provider?: "anilist" | "tmdb" | "custom";
   kind?: "anime" | "movie" | "show";
   episodeNumber?: number;
   candidate?: {
