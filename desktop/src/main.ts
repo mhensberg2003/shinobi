@@ -1,4 +1,4 @@
-import { app, BaseWindow, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -7,7 +7,7 @@ import path from "node:path";
 const DEV_SERVER_URL = "http://188.245.226.225:7823";
 const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
-let mpvWindow: BaseWindow | null = null;
+let mpvWindow: BrowserWindow | null = null;
 let mpvPath = "mpv";
 let mpvProcess: ReturnType<typeof spawn> | null = null;
 let mpvIpc: MpvIpc | null = null;
@@ -90,7 +90,7 @@ function resolveMpvPathSync(): string | null {
 // Native window handle helper
 // ---------------------------------------------------------------------------
 
-function readNativeHandle(win: BaseWindow | BrowserWindow): string {
+function readNativeHandle(win: BrowserWindow): string {
   const handle = win.getNativeWindowHandle();
   if (process.platform === "win32") {
     if (handle.length >= 8) {
@@ -103,34 +103,43 @@ function readNativeHandle(win: BaseWindow | BrowserWindow): string {
 
 // ---------------------------------------------------------------------------
 // Dedicated child window for mpv video output.
-// Uses BaseWindow (no Chromium layer) so mpv gets full control of the
-// window surface — video renders directly and receives all input.
+// Transparent BrowserWindow — mpv renders via --wid underneath the
+// Chromium layer. The overlay page provides custom player controls and
+// forwards all input to mpv via JSON IPC (mpv's own OSC is disabled).
 // ---------------------------------------------------------------------------
 
-function createMpvWindow(): BaseWindow | null {
+function createMpvWindow(): BrowserWindow | null {
   if (!mainWindow) return null;
 
   const bounds = mainWindow.getContentBounds();
 
-  const win = new BaseWindow({
+  const win = new BrowserWindow({
     parent: mainWindow,
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     frame: false,
+    transparent: true,
     hasShadow: false,
     resizable: false,
     movable: false,
     focusable: true,
     skipTaskbar: true,
     show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   });
 
+  // Load transparent overlay with player controls
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PLAYER_OVERLAY_HTML)}`);
   win.show();
+  win.focus();
 
-  const handle = win.getNativeWindowHandle();
-  console.log("[mpv-window] created | bounds:", bounds, "| handle raw:", handle.toString("hex"), "| decimal:", readNativeHandle(win));
+  console.log("[mpv-window] created | bounds:", bounds, "| handle:", readNativeHandle(win));
 
   // Keep mpv window in sync when main window moves/resizes
   const syncBounds = () => {
@@ -163,6 +172,233 @@ function destroyMpvWindow() {
   }
   mpvWindow = null;
 }
+
+// ---------------------------------------------------------------------------
+// Inline HTML for the transparent player overlay.
+// Controls mpv entirely via preload IPC — no direct input to mpv needed.
+// ---------------------------------------------------------------------------
+
+const PLAYER_OVERLAY_HTML = `<!DOCTYPE html>
+<html style="background:transparent;margin:0;padding:0;overflow:hidden;user-select:none">
+<head><style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:transparent; width:100vw; height:100vh; font-family:system-ui,-apple-system,sans-serif; color:#fff; cursor:none; }
+  body.show-cursor { cursor:default; }
+  body.show-cursor .controls { opacity:1; }
+
+  .controls {
+    position:fixed; bottom:0; left:0; right:0;
+    background:linear-gradient(transparent, rgba(0,0,0,0.85));
+    padding:16px 20px 14px; opacity:0; transition:opacity 0.25s;
+    display:flex; flex-direction:column; gap:8px;
+  }
+
+  .seek-row { display:flex; align-items:center; gap:10px; font-size:12px; color:rgba(255,255,255,0.6); }
+  .seek-bar-wrap { flex:1; height:4px; background:rgba(255,255,255,0.15); border-radius:2px; cursor:pointer; position:relative; }
+  .seek-bar-wrap:hover { height:6px; }
+  .seek-fill { height:100%; background:#e50914; border-radius:2px; pointer-events:none; }
+
+  .btn-row { display:flex; align-items:center; gap:14px; }
+  .btn { background:none; border:none; color:#fff; cursor:pointer; padding:4px; opacity:0.85; display:flex; align-items:center; }
+  .btn:hover { opacity:1; }
+  .btn svg { width:22px; height:22px; }
+  .spacer { flex:1; }
+
+  .vol-wrap { display:flex; align-items:center; gap:6px; }
+  .vol-bar { width:70px; height:3px; background:rgba(255,255,255,0.2); border-radius:2px; cursor:pointer; position:relative; }
+  .vol-fill { height:100%; background:#fff; border-radius:2px; pointer-events:none; }
+
+  .track-menu {
+    position:fixed; bottom:70px; right:20px; background:rgba(20,20,20,0.95);
+    border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 0;
+    min-width:200px; display:none; font-size:13px; max-height:60vh; overflow-y:auto;
+  }
+  .track-menu.open { display:block; }
+  .track-menu-title { padding:6px 14px; font-size:11px; color:rgba(255,255,255,0.4); text-transform:uppercase; letter-spacing:0.5px; }
+  .track-item { padding:7px 14px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+  .track-item:hover { background:rgba(255,255,255,0.08); }
+  .track-item.active { color:#e50914; }
+  .track-dot { width:6px; height:6px; border-radius:50%; background:transparent; flex-shrink:0; }
+  .track-item.active .track-dot { background:#e50914; }
+
+  .title-bar { position:fixed; top:0; left:0; right:0; padding:14px 18px; background:linear-gradient(rgba(0,0,0,0.7), transparent); opacity:0; transition:opacity 0.25s; font-size:14px; font-weight:500; }
+  body.show-cursor .title-bar { opacity:1; }
+</style></head>
+<body>
+  <div class="title-bar" id="titleBar"></div>
+
+  <div class="controls">
+    <div class="seek-row">
+      <span id="timePos">0:00</span>
+      <div class="seek-bar-wrap" id="seekBar"><div class="seek-fill" id="seekFill" style="width:0%"></div></div>
+      <span id="duration">0:00</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="playBtn" title="Play/Pause">
+        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+      </button>
+      <div class="vol-wrap">
+        <button class="btn" id="muteBtn" title="Mute">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11,5 6,9 2,9 2,15 6,15 11,19" fill="currentColor"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+        </button>
+        <div class="vol-bar" id="volBar"><div class="vol-fill" id="volFill" style="width:100%"></div></div>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn" id="subBtn" title="Subtitles">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="14" x2="14" y2="14"/><line x1="6" y1="18" x2="18" y2="18"/></svg>
+      </button>
+      <button class="btn" id="audioBtn" title="Audio">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3" fill="currentColor"/><circle cx="18" cy="16" r="3" fill="currentColor"/></svg>
+      </button>
+      <button class="btn" id="fsBtn" title="Fullscreen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15,3 21,3 21,9"/><polyline points="9,21 3,21 3,15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+      </button>
+      <button class="btn" id="exitBtn" title="Exit player">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="track-menu" id="trackMenu"></div>
+
+<script>
+const api = window.electronAPI?.mpv;
+if (!api) console.error("electronAPI.mpv not available");
+
+let paused = false, currentTime = 0, dur = 0, volume = 100, muted = false;
+let tracks = [], hideTimer = null, menuOpen = null;
+
+// --- Formatting ---
+function fmt(s) {
+  if (!isFinite(s) || s < 0) return "0:00";
+  const t = Math.floor(s), h = Math.floor(t/3600), m = Math.floor((t%3600)/60), sec = t%60;
+  return h > 0 ? h+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0") : m+":"+String(sec).padStart(2,"0");
+}
+
+// --- Progress from main process ---
+api.onProgress((d) => {
+  currentTime = d.currentTime; dur = d.duration; paused = d.paused;
+  document.getElementById("timePos").textContent = fmt(currentTime);
+  document.getElementById("duration").textContent = fmt(dur);
+  document.getElementById("seekFill").style.width = dur > 0 ? (currentTime/dur*100)+"%" : "0%";
+  updatePlayIcon();
+});
+
+function updatePlayIcon() {
+  document.getElementById("playBtn").innerHTML = paused
+    ? '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="4" height="16"/><rect x="15" y="4" width="4" height="16"/></svg>';
+}
+
+// --- Play/Pause ---
+document.getElementById("playBtn").onclick = () => {
+  api.command(["cycle", "pause"]);
+  paused = !paused; updatePlayIcon();
+};
+
+// --- Seek bar ---
+document.getElementById("seekBar").onclick = (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  if (dur > 0) api.command(["seek", pct * dur, "absolute"]);
+};
+
+// --- Volume ---
+document.getElementById("volBar").onclick = (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  volume = Math.round(pct * 100);
+  api.setProperty("volume", volume);
+  document.getElementById("volFill").style.width = volume + "%";
+};
+document.getElementById("muteBtn").onclick = () => {
+  muted = !muted;
+  api.setProperty("mute", muted ? "yes" : "no");
+};
+
+// --- Fullscreen ---
+document.getElementById("fsBtn").onclick = () => {
+  api.command(["cycle", "fullscreen"]);
+};
+
+// --- Exit ---
+document.getElementById("exitBtn").onclick = () => {
+  api.quit();
+};
+
+// --- Track menus ---
+async function loadTracks() {
+  tracks = await api.getTracks() || [];
+}
+
+function showTrackMenu(kind) {
+  if (menuOpen === kind) { closeMenu(); return; }
+  menuOpen = kind;
+  const menu = document.getElementById("trackMenu");
+  const filtered = tracks.filter(t => t.type === kind);
+  const title = kind === "sub" ? "Subtitles" : "Audio";
+  let html = '<div class="track-menu-title">' + title + '</div>';
+  if (kind === "sub") {
+    html += '<div class="track-item' + (filtered.every(t => !t.selected) ? ' active' : '') + '" data-id="0"><span class="track-dot"></span>Off</div>';
+  }
+  for (const t of filtered) {
+    const label = (t.title || "") + (t.lang ? " [" + t.lang + "]" : "") || "Track " + t.id;
+    html += '<div class="track-item' + (t.selected ? ' active' : '') + '" data-id="' + t.id + '"><span class="track-dot"></span>' + label + '</div>';
+  }
+  menu.innerHTML = html;
+  menu.classList.add("open");
+  menu.querySelectorAll(".track-item").forEach(el => {
+    el.onclick = () => {
+      const id = parseInt(el.dataset.id);
+      if (kind === "sub") api.setProperty("sid", id === 0 ? "no" : id);
+      else api.setProperty("aid", id);
+      closeMenu(); loadTracks();
+    };
+  });
+}
+function closeMenu() { menuOpen = null; document.getElementById("trackMenu").classList.remove("open"); }
+
+document.getElementById("subBtn").onclick = () => { loadTracks().then(() => showTrackMenu("sub")); };
+document.getElementById("audioBtn").onclick = () => { loadTracks().then(() => showTrackMenu("audio")); };
+
+// --- Cursor auto-hide ---
+function showCursor() {
+  document.body.classList.add("show-cursor");
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { if (!menuOpen) document.body.classList.remove("show-cursor"); }, 2500);
+}
+document.addEventListener("mousemove", showCursor);
+document.addEventListener("click", (e) => {
+  // Click on empty area (not controls) = toggle pause
+  if (e.target === document.body) {
+    api.command(["cycle", "pause"]);
+    paused = !paused; updatePlayIcon();
+  }
+});
+showCursor();
+
+// --- Keyboard shortcuts ---
+document.addEventListener("keydown", (e) => {
+  showCursor();
+  closeMenu();
+  switch(e.key) {
+    case " ": e.preventDefault(); api.command(["cycle", "pause"]); paused = !paused; updatePlayIcon(); break;
+    case "ArrowLeft": api.command(["seek", -10]); break;
+    case "ArrowRight": api.command(["seek", 10]); break;
+    case "ArrowUp": volume = Math.min(100, volume + 5); api.setProperty("volume", volume); document.getElementById("volFill").style.width = volume+"%"; break;
+    case "ArrowDown": volume = Math.max(0, volume - 5); api.setProperty("volume", volume); document.getElementById("volFill").style.width = volume+"%"; break;
+    case "m": api.command(["cycle", "mute"]); muted = !muted; break;
+    case "f": api.command(["cycle", "fullscreen"]); break;
+    case "Escape": api.quit(); break;
+    case "j": api.command(["cycle", "sub"]); loadTracks(); break;
+    case "J": api.command(["cycle", "sub", "down"]); loadTracks(); break;
+    case "#": api.command(["cycle", "audio"]); loadTracks(); break;
+  }
+});
+
+// Initial track load
+setTimeout(loadTracks, 2000);
+</script>
+</body></html>`;
 
 // ---------------------------------------------------------------------------
 // Persistent mpv JSON IPC connection
@@ -306,15 +542,20 @@ function startProgressPolling() {
         mpvIpc.getProperty("duration"),
         mpvIpc.getProperty("pause"),
       ]);
-      if (timePos != null && mainWindow) {
-        mainWindow.webContents.send("mpv:progress", {
+      if (timePos != null) {
+        const progress = {
           currentTime: timePos as number,
           duration: (duration as number) ?? 0,
           paused: pause as boolean,
-        });
+        };
+        // Send to BOTH main window (for heartbeat) and overlay (for controls)
+        mainWindow?.webContents.send("mpv:progress", progress);
+        if (mpvWindow && !mpvWindow.isDestroyed()) {
+          mpvWindow.webContents.send("mpv:progress", progress);
+        }
       }
     } catch {}
-  }, 1000);
+  }, 500);
 }
 
 // ---------------------------------------------------------------------------
@@ -371,13 +612,12 @@ function killMpv(notify = true) {
 // ---------------------------------------------------------------------------
 
 function registerIpc() {
-  // ---- mpv spawn (embedded via --wid in a dedicated child window) ----
+  // ---- mpv spawn (embedded via --wid in a transparent overlay window) ----
   ipcMain.handle("mpv:spawn", async (_event, options: { streamUrl: string; startTime?: number }) => {
-    // Kill any existing mpv without notifying renderer
     killMpv(false);
 
-    // Create a dedicated child window for mpv to render into.
-    // This avoids Chromium's compositor covering the video.
+    // Create transparent overlay window — mpv renders behind it via --wid,
+    // visible through the transparent Chromium layer. Controls are in the overlay.
     mpvWindow = createMpvWindow();
     const wid = mpvWindow ? readNativeHandle(mpvWindow) : null;
 
@@ -388,15 +628,16 @@ function registerIpc() {
       "--no-config",
       "--keep-open=yes",
       `--input-ipc-server=${pipeName}`,
-      "--osc=yes",
-      "--cursor-autohide=1000",
+      "--no-osc",
+      "--no-osd-bar",
+      "--no-input-default-bindings",
+      "--cursor-autohide=no",
       "--title=Shinobi",
     ];
 
     if (wid) {
       args.push(`--wid=${wid}`);
     } else {
-      // Fallback: separate window
       args.push("--force-window=yes");
     }
 
@@ -438,14 +679,13 @@ function registerIpc() {
       destroyMpvWindow();
     });
 
-    // Connect to mpv's JSON IPC (retries while mpv starts up)
+    // Connect to mpv's JSON IPC
     try {
       const ipc = new MpvIpc(pipeName);
       await ipc.connect();
       mpvIpc = ipc;
       console.log("[mpv] IPC connected to", pipeName);
 
-      // Log the video output driver mpv chose
       const vo = await ipc.getProperty("current-vo");
       const videoParams = await ipc.getProperty("video-params");
       console.log("[mpv] vo:", vo, "| video-params:", JSON.stringify(videoParams));
@@ -461,6 +701,7 @@ function registerIpc() {
   // ---- mpv quit ----
   ipcMain.handle("mpv:quit", () => {
     killMpv(false);
+    mainWindow?.webContents.send("mpv:ended");
   });
 
   // ---- Send arbitrary command to mpv ----
@@ -495,7 +736,7 @@ function registerIpc() {
     }
   });
 
-  // ---- Get track list (audio, subtitle, video) ----
+  // ---- Get track list ----
   ipcMain.handle("mpv:get-tracks", async () => {
     if (!mpvIpc) return [];
     try {
