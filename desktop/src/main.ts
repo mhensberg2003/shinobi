@@ -136,6 +136,9 @@ function createMpvWindow(): BrowserWindow | null {
   win.loadURL("about:blank");
   win.show();
 
+  const handle = win.getNativeWindowHandle();
+  console.log("[mpv-window] created | bounds:", bounds, "| handle raw:", handle.toString("hex"), "| decimal:", readNativeHandle(win));
+
   // Keep mpv window in sync when main window moves/resizes
   const syncBounds = () => {
     if (win.isDestroyed() || !mainWindow) return;
@@ -410,13 +413,20 @@ function registerIpc() {
 
     args.push(options.streamUrl);
 
+    console.log("[mpv] spawning with args:", args);
+    console.log("[mpv] wid:", wid, "| mpvWindow bounds:", mpvWindow?.getBounds());
+
     mpvProcess = spawn(mpvPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
     });
 
-    mpvProcess.stdout?.on("data", () => {});
-    mpvProcess.stderr?.on("data", () => {});
+    mpvProcess.stdout?.on("data", (chunk) => {
+      console.log("[mpv:stdout]", chunk.toString().trim());
+    });
+    mpvProcess.stderr?.on("data", (chunk) => {
+      console.log("[mpv:stderr]", chunk.toString().trim());
+    });
 
     mpvProcess.on("exit", () => {
       mpvProcess = null;
@@ -440,9 +450,16 @@ function registerIpc() {
       const ipc = new MpvIpc(pipeName);
       await ipc.connect();
       mpvIpc = ipc;
+      console.log("[mpv] IPC connected to", pipeName);
+
+      // Log the video output driver mpv chose
+      const vo = await ipc.getProperty("current-vo");
+      const videoParams = await ipc.getProperty("video-params");
+      console.log("[mpv] vo:", vo, "| video-params:", JSON.stringify(videoParams));
+
       startProgressPolling();
-    } catch {
-      // IPC failed but mpv might still be running in fallback mode
+    } catch (err) {
+      console.error("[mpv] IPC connection failed:", err);
     }
 
     return { ok: true, embedded: !!wid };
