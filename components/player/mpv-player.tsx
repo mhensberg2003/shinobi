@@ -101,7 +101,7 @@ export function MpvPlayer({
   // Show a minimal black background — the user interacts with mpv directly
   // (OSC controls on mouse move, keyboard shortcuts).
   // When mpv exits, the "finished" UI shows.
-  if (embedded && status === "playing") {
+  if (embedded && (status === "launching" || status === "playing")) {
     return <div className="fixed inset-0 z-[100] bg-black" />;
   }
 
