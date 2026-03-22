@@ -3,6 +3,32 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true as const,
 
+  update: {
+    download(): Promise<void> { return ipcRenderer.invoke("update:download"); },
+    install(): Promise<void> { return ipcRenderer.invoke("update:install"); },
+
+    onAvailable(callback: (data: { version: string; currentVersion: string }) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: { version: string; currentVersion: string }) => callback(data);
+      ipcRenderer.on("update:available", handler);
+      return () => { ipcRenderer.removeListener("update:available", handler); };
+    },
+    onDownloadProgress(callback: (data: { percent: number }) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: { percent: number }) => callback(data);
+      ipcRenderer.on("update:download-progress", handler);
+      return () => { ipcRenderer.removeListener("update:download-progress", handler); };
+    },
+    onDownloaded(callback: () => void): () => void {
+      const handler = () => callback();
+      ipcRenderer.on("update:downloaded", handler);
+      return () => { ipcRenderer.removeListener("update:downloaded", handler); };
+    },
+    onError(callback: (data: { message: string }) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: { message: string }) => callback(data);
+      ipcRenderer.on("update:error", handler);
+      return () => { ipcRenderer.removeListener("update:error", handler); };
+    },
+  },
+
   window: {
     minimize(): Promise<void> { return ipcRenderer.invoke("window:minimize"); },
     maximize(): Promise<void> { return ipcRenderer.invoke("window:maximize"); },

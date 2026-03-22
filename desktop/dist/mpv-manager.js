@@ -10,44 +10,75 @@ const node_events_1 = require("node:events");
 const node_fs_1 = require("node:fs");
 const node_path_1 = __importDefault(require("node:path"));
 const node_os_1 = __importDefault(require("node:os"));
-const SOCKET_PATH = node_path_1.default.join(node_os_1.default.tmpdir(), `shinobi-mpv-${process.pid}.sock`);
+let spawnCounter = 0;
+function getSocketPaths() {
+    const id = `shinobi-mpv-${process.pid}-${++spawnCounter}`;
+    const socketPath = process.platform === "win32"
+        ? `\\\\.\\pipe\\${id}`
+        : node_path_1.default.join(node_os_1.default.tmpdir(), `${id}.sock`);
+    // mpv on Windows auto-adds \\.\pipe\ prefix
+    const mpvIpcArg = process.platform === "win32" ? id : socketPath;
+    return { socketPath, mpvIpcArg };
+}
 const OBSERVED_PROPERTIES = ["time-pos", "duration", "pause", "volume", "mute", "track-list", "eof-reached"];
-const MPV_CONNECT_TIMEOUT_MS = 5000;
-const MPV_CONNECT_RETRY_MS = 100;
+const MPV_CONNECT_TIMEOUT_MS = 10000;
+const MPV_CONNECT_RETRY_MS = 200;
 class MpvManager extends node_events_1.EventEmitter {
     process = null;
     socket = null;
+    socketPath = "";
     requestId = 0;
     pendingRequests = new Map();
     buffer = "";
+    mpvBinary;
+    destroyed = false;
+    constructor(mpvBinary = "mpv") {
+        super();
+        this.mpvBinary = mpvBinary;
+    }
     async start(streamUrl, options) {
+        const { socketPath, mpvIpcArg } = getSocketPaths();
+        this.socketPath = socketPath;
         // Clean up stale socket
-        if ((0, node_fs_1.existsSync)(SOCKET_PATH)) {
+        if (process.platform !== "win32" && (0, node_fs_1.existsSync)(socketPath)) {
             try {
-                (0, node_fs_1.unlinkSync)(SOCKET_PATH);
+                (0, node_fs_1.unlinkSync)(socketPath);
             }
             catch { }
         }
         const args = [
-            `--input-ipc-server=${SOCKET_PATH}`,
-            "--idle=once",
+            "--no-config",
+            `--input-ipc-server=${mpvIpcArg}`,
+            "--idle",
             "--no-terminal",
             "--no-osc",
             "--no-osd-bar",
             "--keep-open=yes",
-            "--force-window=no",
-            "--vo=null",
-            "--video=no",
-            // Audio/video output will be handled by mpv natively
-            // We start with --video=no because for Phase 1 we only test IPC
-            // Phase 2 will add --wid for embedded video rendering
         ];
-        this.process = (0, node_child_process_1.spawn)("mpv", args, {
+        if (options?.wid) {
+            args.push(`--wid=${options.wid}`);
+        }
+        else {
+            args.push("--force-window=yes");
+        }
+        console.log(`[mpv] spawning: ${this.mpvBinary}`, args);
+        console.log(`[mpv] socket path: ${socketPath}`);
+        this.process = (0, node_child_process_1.spawn)(this.mpvBinary, args, {
             stdio: ["ignore", "pipe", "pipe"],
         });
-        this.process.on("exit", (code) => {
-            console.log(`[mpv] process exited with code ${code}`);
+        console.log(`[mpv] pid: ${this.process.pid ?? "none"}`);
+        this.process.on("error", (err) => {
+            console.error(`[mpv] spawn error:`, err.message);
+        });
+        this.process.on("exit", (code, signal) => {
+            console.log(`[mpv] exited code=${code} signal=${signal}`);
             this.cleanup();
+            this.emit("exit", code);
+        });
+        this.process.stdout?.on("data", (data) => {
+            const msg = data.toString().trim();
+            if (msg)
+                console.log(`[mpv:stdout] ${msg}`);
         });
         this.process.stderr?.on("data", (data) => {
             const msg = data.toString().trim();
@@ -69,20 +100,30 @@ class MpvManager extends node_events_1.EventEmitter {
     }
     async connectSocket() {
         const started = Date.now();
+        let attempts = 0;
         while (Date.now() - started < MPV_CONNECT_TIMEOUT_MS) {
+            if (this.destroyed) {
+                throw new Error("mpv manager was destroyed before socket connected");
+            }
+            attempts++;
             try {
                 await this.tryConnect();
+                console.log(`[mpv] socket connected after ${attempts} attempts (${Date.now() - started}ms)`);
                 return;
             }
-            catch {
+            catch (err) {
+                if (attempts <= 3 || attempts % 10 === 0) {
+                    console.log(`[mpv] connect attempt ${attempts} failed: ${err instanceof Error ? err.message : err}`);
+                }
                 await new Promise((r) => setTimeout(r, MPV_CONNECT_RETRY_MS));
             }
         }
+        console.error(`[mpv] gave up after ${attempts} attempts (${Date.now() - started}ms)`);
         throw new Error("Failed to connect to mpv IPC socket within timeout");
     }
     tryConnect() {
         return new Promise((resolve, reject) => {
-            const socket = (0, node_net_1.createConnection)(SOCKET_PATH);
+            const socket = (0, node_net_1.createConnection)(this.socketPath);
             socket.on("connect", () => {
                 this.socket = socket;
                 this.setupSocketHandlers();
@@ -201,6 +242,7 @@ class MpvManager extends node_events_1.EventEmitter {
         }));
     }
     async quit() {
+        this.destroyed = true;
         try {
             await this.sendCommand(["quit"]);
         }
@@ -210,6 +252,7 @@ class MpvManager extends node_events_1.EventEmitter {
         this.cleanup();
     }
     cleanup() {
+        this.destroyed = true;
         if (this.socket) {
             this.socket.destroy();
             this.socket = null;
@@ -219,10 +262,12 @@ class MpvManager extends node_events_1.EventEmitter {
         }
         this.process = null;
         this.pendingRequests.clear();
-        try {
-            (0, node_fs_1.unlinkSync)(SOCKET_PATH);
+        if (process.platform !== "win32" && this.socketPath) {
+            try {
+                (0, node_fs_1.unlinkSync)(this.socketPath);
+            }
+            catch { }
         }
-        catch { }
     }
 }
 exports.MpvManager = MpvManager;

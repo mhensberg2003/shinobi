@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { autoUpdater, UpdateInfo } from "electron-updater";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -810,6 +811,70 @@ function registerIpc() {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-updater (checks GitHub Releases for new versions)
+// ---------------------------------------------------------------------------
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  // Private repo — read-only token to access releases API
+  autoUpdater.setFeedURL({
+    provider: "github",
+    owner: "mhensberg2003",
+    repo: "shinobi",
+    private: true,
+    token: "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",
+  });
+
+  autoUpdater.on("update-available", (info: UpdateInfo) => {
+    console.log("[updater] Update available:", info.version);
+    mainWindow?.webContents.send("update:available", {
+      version: info.version,
+      currentVersion: app.getVersion(),
+    });
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    console.log("[updater] App is up to date");
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    mainWindow?.webContents.send("update:download-progress", {
+      percent: Math.round(progress.percent),
+    });
+  });
+
+  autoUpdater.on("update-downloaded", () => {
+    console.log("[updater] Update downloaded, ready to install");
+    mainWindow?.webContents.send("update:downloaded");
+  });
+
+  autoUpdater.on("error", (err) => {
+    console.error("[updater] Error:", err);
+    mainWindow?.webContents.send("update:error", { message: String(err) });
+  });
+
+  // IPC: renderer requests download
+  ipcMain.handle("update:download", () => {
+    autoUpdater.downloadUpdate();
+  });
+
+  // IPC: renderer requests install (quit and install)
+  ipcMain.handle("update:install", () => {
+    autoUpdater.quitAndInstall(false, true);
+  });
+
+  // Check now, then every 30 minutes
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error("[updater] Initial check failed:", err);
+  });
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 30 * 60 * 1000);
+}
+
+// ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
@@ -827,6 +892,7 @@ app.whenReady().then(() => {
 
   registerIpc();
   createWindow();
+  setupAutoUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

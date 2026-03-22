@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { Nav } from "@/components/nav";
 import { TitleBar } from "@/components/title-bar";
+import { UpdateWall } from "@/components/update-wall";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn("font-sans", geist.variable)}>
       <body className="h-screen overflow-hidden antialiased">
+        <UpdateWall />
         <TitleBar />
         <Nav />
         <div data-scroll-root className="h-screen overflow-auto" style={{ scrollbarWidth: "none" }}>
