@@ -9,8 +9,10 @@ function LoginForm() {
   const params = useSearchParams();
   const next = params.get("next") ?? "/";
 
+  const [mode, setMode] = useState<"login" | "signup">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -20,10 +22,15 @@ function LoginForm() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const url = mode === "login" ? "/api/auth/login" : "/api/auth/signup";
+      const body = mode === "login"
+        ? { username, password }
+        : { username, password, inviteCode };
+
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -31,7 +38,7 @@ function LoginForm() {
         router.refresh();
       } else {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Login failed.");
+        setError(data.error ?? `${mode === "login" ? "Login" : "Sign up"} failed.`);
       }
     } catch {
       setError("Network error. Try again.");
@@ -53,7 +60,6 @@ function LoginForm() {
       }}
     >
       <div style={{ width: "100%", maxWidth: 360 }}>
-        {/* Logo */}
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 40 }}>
           <Image src="/logo.png" alt="Shinobi" width={48} height={48} className="object-contain" />
         </div>
@@ -73,10 +79,20 @@ function LoginForm() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
             required
             style={inputStyle}
           />
+          {mode === "signup" && (
+            <input
+              type="text"
+              placeholder="Invite code"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              required
+              style={inputStyle}
+            />
+          )}
 
           {error && (
             <p style={{ fontSize: 13, color: "var(--accent)", margin: 0 }}>{error}</p>
@@ -98,7 +114,23 @@ function LoginForm() {
               transition: "opacity 0.15s",
             }}
           >
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? (mode === "login" ? "Signing in…" : "Creating account…") : (mode === "login" ? "Sign in" : "Create account")}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--muted)",
+              fontSize: 13,
+              cursor: "pointer",
+              textAlign: "center",
+              padding: "4px 0",
+            }}
+          >
+            {mode === "login" ? "Have an invite code? Create account" : "Already have an account? Sign in"}
           </button>
         </form>
       </div>
