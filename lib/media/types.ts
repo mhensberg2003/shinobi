@@ -11,6 +11,7 @@ export type MediaSearchItem = {
   description?: string;
   posterUrl?: string;
   backdropUrl?: string;
+  backdropVideoUrl?: string;
   year?: number;
   genres?: string[];
   score?: number;

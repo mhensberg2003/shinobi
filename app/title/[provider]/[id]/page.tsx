@@ -52,14 +52,26 @@ export default async function TitlePage({ params, searchParams }: PageProps) {
     <main className="min-h-screen bg-[#141414] text-white">
       {/* Hero */}
       <section className="relative overflow-hidden">
-        {detail.backdropUrl && (
+        {(detail.backdropVideoUrl || detail.backdropUrl) && (
           <div className="absolute inset-0">
-            <img
-              src={detail.backdropUrl}
-              alt=""
-              className="h-full w-full object-cover"
-              style={{ objectPosition: "center 28%" }}
-            />
+            {detail.backdropVideoUrl ? (
+              <video
+                src={detail.backdropVideoUrl}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="h-full w-full object-cover"
+                style={{ objectPosition: "center 28%" }}
+              />
+            ) : (
+              <img
+                src={detail.backdropUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                style={{ objectPosition: "center 28%" }}
+              />
+            )}
             <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.14)_0%,rgba(0,0,0,0.42)_40%,rgba(20,20,20,0.92)_78%,#141414_100%)]" />
           </div>
         )}
