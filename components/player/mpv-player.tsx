@@ -18,6 +18,7 @@ type MpvPlayerProps = {
 
 export function MpvPlayer({
   resumeTime,
+  sessionKey,
   title,
   streamUrl,
   posterUrl,
@@ -26,6 +27,8 @@ export function MpvPlayer({
   const router = useRouter();
   const [status, setStatus] = useState<"launching" | "playing" | "ended" | "error">("launching");
   const [errorMsg, setErrorMsg] = useState("");
+  const [embedded, setEmbedded] = useState(false);
+  const [progress, setProgress] = useState<{ currentTime: number; duration: number } | null>(null);
 
   const hasResumePoint = Boolean(resumeTime && resumeTime > 5);
 
@@ -33,6 +36,7 @@ export function MpvPlayer({
     ? `Episode ${episodeNumber}`
     : null;
 
+  // Spawn mpv on mount
   useEffect(() => {
     const mpv = window.electronAPI?.mpv;
     if (!mpv) return;
@@ -41,7 +45,11 @@ export function MpvPlayer({
     let active = true;
 
     mpv.spawn(streamUrl, { startTime })
-      .then(() => { if (active) setStatus("playing"); })
+      .then((result) => {
+        if (!active) return;
+        setStatus("playing");
+        setEmbedded(result.embedded);
+      })
       .catch((err) => {
         if (!active) return;
         setStatus("error");
@@ -52,12 +60,45 @@ export function MpvPlayer({
       if (active) setStatus("ended");
     });
 
+    const unsubProgress = mpv.onProgress((data) => {
+      if (active) setProgress(data);
+    });
+
     return () => {
       active = false;
       unsubEnded();
+      unsubProgress();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamUrl]);
+
+  // Heartbeat for resume tracking
+  useEffect(() => {
+    if (!sessionKey || !progress) return;
+
+    const interval = setInterval(() => {
+      if (!progress) return;
+      fetch("/api/media-backend/watch-sessions/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionKey,
+          progressSeconds: progress.currentTime,
+          durationSeconds: progress.duration,
+        }),
+      }).catch(() => {});
+    }, 30_000);
+
+    return () => clearInterval(interval);
+  }, [sessionKey, progress]);
+
+  // When mpv is embedded and playing, it covers the entire window.
+  // Show a minimal black background — the user interacts with mpv directly
+  // (OSC controls on mouse move, keyboard shortcuts).
+  // When mpv exits, the "finished" UI shows.
+  if (embedded && status === "playing") {
+    return <div className="fixed inset-0 z-[100] bg-black" />;
+  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0a0a0a]">
@@ -95,7 +136,7 @@ export function MpvPlayer({
         )}
 
         <p className="mt-5 text-[15px] font-medium text-white/90">
-          {status === "launching" ? "Opening in mpv" : status === "playing" ? "Now playing" : status === "ended" ? "Finished" : "Playback failed"}
+          {status === "launching" ? "Loading" : status === "playing" ? "Now playing" : status === "ended" ? "Finished" : "Playback failed"}
         </p>
 
         <p className="mt-1.5 max-w-[320px] truncate text-center text-[13px] text-white/40">

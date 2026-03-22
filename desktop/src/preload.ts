@@ -11,12 +11,36 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   mpv: {
-    spawn(streamUrl: string, options?: { startTime?: number }): Promise<{ ok: boolean }> {
+    spawn(streamUrl: string, options?: { startTime?: number }): Promise<{ ok: boolean; embedded: boolean }> {
       return ipcRenderer.invoke("mpv:spawn", { streamUrl, ...options });
     },
 
     quit(): Promise<void> {
       return ipcRenderer.invoke("mpv:quit");
+    },
+
+    command(args: unknown[]): Promise<{ ok?: boolean; data?: unknown; error?: string }> {
+      return ipcRenderer.invoke("mpv:command", args);
+    },
+
+    getProperty(name: string): Promise<unknown> {
+      return ipcRenderer.invoke("mpv:get-property", name);
+    },
+
+    setProperty(name: string, value: unknown): Promise<{ ok?: boolean; error?: string }> {
+      return ipcRenderer.invoke("mpv:set-property", name, value);
+    },
+
+    getTracks(): Promise<Array<{
+      id: number;
+      type: "video" | "audio" | "sub";
+      title?: string;
+      lang?: string;
+      selected: boolean;
+      codec?: string;
+      external?: boolean;
+    }>> {
+      return ipcRenderer.invoke("mpv:get-tracks");
     },
 
     onEnded(callback: () => void): () => void {
@@ -27,8 +51,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       };
     },
 
-    onProgress(callback: (data: { currentTime: number; duration: number }) => void): () => void {
-      const handler = (_event: Electron.IpcRendererEvent, data: { currentTime: number; duration: number }) => callback(data);
+    onProgress(callback: (data: { currentTime: number; duration: number; paused: boolean }) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: { currentTime: number; duration: number; paused: boolean }) => callback(data);
       ipcRenderer.on("mpv:progress", handler);
       return () => {
         ipcRenderer.removeListener("mpv:progress", handler);
