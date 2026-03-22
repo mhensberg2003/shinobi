@@ -119,12 +119,12 @@ function createMpvWindow(): BrowserWindow | null {
     width: bounds.width,
     height: bounds.height,
     frame: false,
+    transparent: true,
     hasShadow: false,
     resizable: false,
     movable: false,
     focusable: true,
     skipTaskbar: true,
-    backgroundColor: "#000000",
     show: false,
     webPreferences: {
       contextIsolation: true,
@@ -132,8 +132,8 @@ function createMpvWindow(): BrowserWindow | null {
     },
   });
 
-  // Load blank page — no Chromium content to cover mpv
-  win.loadURL("about:blank");
+  // Transparent page so Chromium's compositor doesn't cover mpv
+  win.loadURL("data:text/html,<html style='background:transparent'><body></body></html>");
   win.show();
 
   const handle = win.getNativeWindowHandle();
