@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BaseWindow, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -7,7 +7,7 @@ import path from "node:path";
 const DEV_SERVER_URL = "http://188.245.226.225:7823";
 const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
-let mpvWindow: BrowserWindow | null = null;
+let mpvWindow: BaseWindow | null = null;
 let mpvPath = "mpv";
 let mpvProcess: ReturnType<typeof spawn> | null = null;
 let mpvIpc: MpvIpc | null = null;
@@ -90,7 +90,7 @@ function resolveMpvPathSync(): string | null {
 // Native window handle helper
 // ---------------------------------------------------------------------------
 
-function readNativeHandle(win: BrowserWindow): string {
+function readNativeHandle(win: BaseWindow | BrowserWindow): string {
   const handle = win.getNativeWindowHandle();
   if (process.platform === "win32") {
     if (handle.length >= 8) {
@@ -103,40 +103,30 @@ function readNativeHandle(win: BrowserWindow): string {
 
 // ---------------------------------------------------------------------------
 // Dedicated child window for mpv video output.
-// A separate BrowserWindow with no web content so mpv's video surface
-// isn't covered by Chromium's compositor.
+// Uses BaseWindow (no Chromium layer) so mpv gets full control of the
+// window surface — video renders directly and receives all input.
 // ---------------------------------------------------------------------------
 
-function createMpvWindow(): BrowserWindow | null {
+function createMpvWindow(): BaseWindow | null {
   if (!mainWindow) return null;
 
   const bounds = mainWindow.getContentBounds();
 
-  const win = new BrowserWindow({
+  const win = new BaseWindow({
     parent: mainWindow,
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     frame: false,
-    transparent: true,
     hasShadow: false,
     resizable: false,
     movable: false,
     focusable: true,
     skipTaskbar: true,
     show: false,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
   });
 
-  // Transparent page so Chromium's compositor doesn't cover mpv
-  win.loadURL("data:text/html,<html style='background:transparent'><body></body></html>");
-
-  // Let all mouse/keyboard input pass through to mpv's native surface
-  win.setIgnoreMouseEvents(true);
   win.show();
 
   const handle = win.getNativeWindowHandle();
