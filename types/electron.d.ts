@@ -30,10 +30,27 @@ interface ElectronWindowAPI {
   isMaximized(): Promise<boolean>;
 }
 
+type ElectronUpdateMode = "auto" | "manual";
+
+interface ElectronUpdateAPI {
+  download(): Promise<{ mode: ElectronUpdateMode; opened: boolean }>;
+  install(): Promise<{ mode: ElectronUpdateMode }>;
+  onAvailable(callback: (data: {
+    version: string;
+    currentVersion: string;
+    mode: ElectronUpdateMode;
+    releaseUrl?: string;
+  }) => void): () => void;
+  onDownloadProgress(callback: (data: { percent: number }) => void): () => void;
+  onDownloaded(callback: () => void): () => void;
+  onError(callback: (data: { message: string }) => void): () => void;
+}
+
 interface Window {
   electronAPI?: {
     isElectron: true;
     window: ElectronWindowAPI;
+    update: ElectronUpdateAPI;
     mpv: ElectronMpvAPI;
   };
 }

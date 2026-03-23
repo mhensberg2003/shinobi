@@ -1,14 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+type UpdateMode = "auto" | "manual";
+
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true as const,
 
   update: {
-    download(): Promise<void> { return ipcRenderer.invoke("update:download"); },
-    install(): Promise<void> { return ipcRenderer.invoke("update:install"); },
+    download(): Promise<{ mode: UpdateMode; opened: boolean }> { return ipcRenderer.invoke("update:download"); },
+    install(): Promise<{ mode: UpdateMode }> { return ipcRenderer.invoke("update:install"); },
 
-    onAvailable(callback: (data: { version: string; currentVersion: string }) => void): () => void {
-      const handler = (_event: Electron.IpcRendererEvent, data: { version: string; currentVersion: string }) => callback(data);
+    onAvailable(callback: (data: { version: string; currentVersion: string; mode: UpdateMode; releaseUrl?: string }) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, data: { version: string; currentVersion: string; mode: UpdateMode; releaseUrl?: string }) => callback(data);
       ipcRenderer.on("update:available", handler);
       return () => { ipcRenderer.removeListener("update:available", handler); };
     },

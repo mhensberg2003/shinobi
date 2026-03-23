@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 
 type Status = "idle" | "available" | "downloading" | "ready" | "error";
+type UpdateMode = "auto" | "manual";
 
 type ElectronUpdateAPI = {
-  download(): Promise<void>;
-  install(): Promise<void>;
-  onAvailable(cb: (data: { version: string; currentVersion: string }) => void): () => void;
+  download(): Promise<{ mode: UpdateMode; opened: boolean }>;
+  install(): Promise<{ mode: UpdateMode }>;
+  onAvailable(cb: (data: { version: string; currentVersion: string; mode: UpdateMode; releaseUrl?: string }) => void): () => void;
   onDownloadProgress(cb: (data: { percent: number }) => void): () => void;
   onDownloaded(cb: () => void): () => void;
   onError(cb: (data: { message: string }) => void): () => void;
@@ -22,8 +23,10 @@ export function UpdateWall() {
   const [status, setStatus] = useState<Status>("idle");
   const [version, setVersion] = useState("");
   const [currentVersion, setCurrentVersion] = useState("");
+  const [mode, setMode] = useState<UpdateMode>("auto");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     const api = getUpdateAPI();
@@ -33,6 +36,10 @@ export function UpdateWall() {
       api.onAvailable((data) => {
         setVersion(data.version);
         setCurrentVersion(data.currentVersion);
+        setMode(data.mode);
+        setError("");
+        setProgress(0);
+        setDismissed(false);
         setStatus("available");
       }),
       api.onDownloadProgress((data) => {
@@ -50,25 +57,40 @@ export function UpdateWall() {
     return () => unsubs.forEach((fn) => fn());
   }, []);
 
-  if (status === "idle") return null;
+  if (status === "idle" || dismissed) return null;
 
-  function handleDownload() {
+  async function handleDownload() {
     const api = getUpdateAPI();
     if (!api) return;
-    setStatus("downloading");
-    setProgress(0);
-    api.download();
+    try {
+      if (mode === "manual") {
+        await api.download();
+        setDismissed(true);
+        return;
+      }
+      setStatus("downloading");
+      setProgress(0);
+      await api.download();
+    } catch (err) {
+      setError(String(err));
+      setStatus("error");
+    }
   }
 
-  function handleInstall() {
+  async function handleInstall() {
     const api = getUpdateAPI();
     if (!api) return;
-    api.install();
+    try {
+      await api.install();
+    } catch (err) {
+      setError(String(err));
+      setStatus("error");
+    }
   }
 
   function handleRetry() {
     setError("");
-    handleDownload();
+    void handleDownload();
   }
 
   return (
@@ -134,7 +156,9 @@ export function UpdateWall() {
           <p style={{ color: "#888", fontSize: 14, margin: 0, lineHeight: 1.6 }}>
             {status === "ready"
               ? `Version ${version} is ready to install. The app will restart.`
-              : `A new version of Shinobi is available.`}
+              : mode === "manual"
+                ? "A new version of Shinobi is available. macOS updates are installed from the release download."
+                : "A new version of Shinobi is available."}
             {status !== "ready" && (
               <>
                 <br />
@@ -180,14 +204,25 @@ export function UpdateWall() {
         )}
 
         {/* Actions */}
-        {status === "available" && (
-          <button onClick={handleDownload} style={btnStyle}>
+        {status === "available" && mode === "auto" && (
+          <button onClick={() => { void handleDownload(); }} style={btnStyle}>
             Install Update
           </button>
         )}
 
+        {status === "available" && mode === "manual" && (
+          <div style={{ display: "flex", gap: 12 }}>
+            <button onClick={() => { void handleDownload(); }} style={btnStyle}>
+              Download Release
+            </button>
+            <button onClick={() => setDismissed(true)} style={secondaryBtnStyle}>
+              Later
+            </button>
+          </div>
+        )}
+
         {status === "ready" && (
-          <button onClick={handleInstall} style={btnStyle}>
+          <button onClick={() => { void handleInstall(); }} style={btnStyle}>
             Restart & Install
           </button>
         )}
@@ -211,4 +246,10 @@ const btnStyle: React.CSSProperties = {
   border: "none",
   borderRadius: 8,
   cursor: "pointer",
+};
+
+const secondaryBtnStyle: React.CSSProperties = {
+  ...btnStyle,
+  color: "#e5e5e5",
+  backgroundColor: "rgba(255,255,255,0.08)",
 };

@@ -1,4 +1,4 @@
-import { app, BaseWindow, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BaseWindow, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import { autoUpdater, UpdateInfo } from "electron-updater";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -7,6 +7,7 @@ import path from "node:path";
 import { getLibMpvAddon, hasLibMpvAddon } from "./libmpv-native";
 
 const DEV_SERVER_URL = "http://188.245.226.225:7823";
+const RELEASES_URL = "https://github.com/mhensberg2003/shinobi/releases";
 const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
 let mpvWindow: BrowserWindow | null = null;
@@ -18,6 +19,9 @@ let mpvController: MpvController | null = null;
 let mpvNativePlayerId: number | null = null;
 let mpvProgressTimer: ReturnType<typeof setInterval> | null = null;
 let spawnCounter = 0;
+let latestReleaseUrl: string | null = null;
+
+type UpdateMode = "auto" | "manual";
 
 // ---------------------------------------------------------------------------
 // Config persistence
@@ -945,6 +949,8 @@ function registerIpc() {
 // ---------------------------------------------------------------------------
 
 function setupAutoUpdater() {
+  const updateMode: UpdateMode = process.platform === "darwin" ? "manual" : "auto";
+
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
@@ -955,14 +961,18 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on("update-available", (info: UpdateInfo) => {
+    latestReleaseUrl = `${RELEASES_URL}/tag/v${info.version}`;
     console.log("[updater] Update available:", info.version);
     mainWindow?.webContents.send("update:available", {
       version: info.version,
       currentVersion: app.getVersion(),
+      mode: updateMode,
+      releaseUrl: latestReleaseUrl,
     });
   });
 
   autoUpdater.on("update-not-available", () => {
+    latestReleaseUrl = null;
     console.log("[updater] App is up to date");
   });
 
@@ -983,13 +993,23 @@ function setupAutoUpdater() {
   });
 
   // IPC: renderer requests download
-  ipcMain.handle("update:download", () => {
+  ipcMain.handle("update:download", async () => {
+    if (updateMode === "manual") {
+      const target = latestReleaseUrl ?? RELEASES_URL;
+      await shell.openExternal(target);
+      return { mode: updateMode, opened: true };
+    }
     autoUpdater.downloadUpdate();
+    return { mode: updateMode, opened: false };
   });
 
   // IPC: renderer requests install (quit and install)
   ipcMain.handle("update:install", () => {
+    if (updateMode === "manual") {
+      return { mode: updateMode };
+    }
     autoUpdater.quitAndInstall(false, true);
+    return { mode: updateMode };
   });
 
   // Check now, then every 30 minutes

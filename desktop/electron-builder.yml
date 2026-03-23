@@ -3,8 +3,7 @@ productName: Shinobi
 directories:
   output: release
 asarUnpack:
-  - native/build/**/*.node
-  - native/build/**/*.dylib
+  - native/build/**/*
 files:
   - dist/**/*
   - assets/**/*
