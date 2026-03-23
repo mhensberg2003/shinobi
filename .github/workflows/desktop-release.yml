@@ -32,6 +32,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Install mpv
+        if: runner.os == 'macOS'
+        run: |
+          brew install mpv
+          echo "MPV_PREFIX=$(brew --prefix mpv)" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         working-directory: desktop
         run: pnpm install --frozen-lockfile
