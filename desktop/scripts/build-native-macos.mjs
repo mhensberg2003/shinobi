@@ -92,17 +92,27 @@ function clearBuildDir() {
   mkdirSync(outputDir, { recursive: true });
 }
 
+function failOrSkip(message) {
+  if (bundleDylibs) {
+    console.error(message);
+    process.exit(1);
+  }
+
+  clearBuildDir();
+  console.warn(`${message}
+Skipping macOS libmpv addon build for this environment.`);
+  process.exit(0);
+}
+
 const nodeInclude = findNodeInclude();
 const mpvPrefix = findMpvPrefix();
 
 if (!nodeInclude) {
-  console.error("Missing Node headers. Checked the current Node prefix and common Homebrew paths.");
-  process.exit(1);
+  failOrSkip("Missing Node headers. Checked the current Node prefix and common Homebrew paths.");
 }
 
 if (!mpvPrefix) {
-  console.error("Missing Homebrew mpv prefix. Set MPV_PREFIX if mpv is installed elsewhere.");
-  process.exit(1);
+  failOrSkip("Missing Homebrew mpv prefix. Set MPV_PREFIX if mpv is installed elsewhere.");
 }
 
 const mpvInclude = path.join(mpvPrefix, "include");
@@ -110,8 +120,7 @@ const mpvLib = path.join(mpvPrefix, "lib");
 const rootMpvLib = path.join(mpvLib, "libmpv.2.dylib");
 
 if (!existsSync(path.join(mpvInclude, "mpv", "client.h")) || !existsSync(rootMpvLib)) {
-  console.error(`Missing libmpv headers or dylib under ${mpvPrefix}`);
-  process.exit(1);
+  failOrSkip(`Missing libmpv headers or dylib under ${mpvPrefix}`);
 }
 
 clearBuildDir();
