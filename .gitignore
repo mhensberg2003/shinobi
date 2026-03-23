@@ -23,6 +23,7 @@ node_modules
 # desktop build output
 desktop/dist
 desktop/release
+desktop/native/build
 
 # misc
 .DS_Store

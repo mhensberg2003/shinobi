@@ -1,15 +1,17 @@
 {
   "name": "shinobi-desktop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "main": "dist/main.js",
   "homepage": "https://github.com/mhensberg2003/shinobi",
   "scripts": {
-    "dev": "tsc && electron dist/main.js",
-    "build": "tsc",
-    "start": "electron dist/main.js",
-    "package": "dotenv -e .env -- electron-builder",
-    "release": "electron-builder --publish always"
+    "build:native": "node scripts/build-native-macos.mjs",
+    "build:native:bundle": "node scripts/build-native-macos.mjs --bundle-dylibs",
+    "dev": "pnpm run build:native && tsc && electron dist/main.js",
+    "build": "pnpm run build:native && tsc",
+    "start": "pnpm run build:native && electron dist/main.js",
+    "package": "pnpm run build:native:bundle && dotenv -e .env -- electron-builder",
+    "release": "pnpm run build:native:bundle && electron-builder --publish always"
   },
   "devDependencies": {
     "dotenv-cli": "^11.0.0",

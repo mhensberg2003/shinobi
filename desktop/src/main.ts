@@ -1,17 +1,21 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BaseWindow, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { autoUpdater, UpdateInfo } from "electron-updater";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { getLibMpvAddon, hasLibMpvAddon } from "./libmpv-native";
 
 const DEV_SERVER_URL = "http://188.245.226.225:7823";
 const CONFIG_PATH = path.join(app.getPath("userData"), "shinobi-config.json");
 let mainWindow: BrowserWindow | null = null;
 let mpvWindow: BrowserWindow | null = null;
+let mpvVideoWindow: BaseWindow | null = null; // macOS only: native surface for mpv --wid
 let mpvPath = "mpv";
 let mpvProcess: ReturnType<typeof spawn> | null = null;
 let mpvIpc: MpvIpc | null = null;
+let mpvController: MpvController | null = null;
+let mpvNativePlayerId: number | null = null;
 let mpvProgressTimer: ReturnType<typeof setInterval> | null = null;
 let spawnCounter = 0;
 
@@ -48,8 +52,16 @@ function findMpvOnPath(): boolean {
   }
 }
 
+function hasMacOsLibMpv(): boolean {
+  return process.platform === "darwin" && hasLibMpvAddon();
+}
+
 function resolveMpvPathSync(): string | null {
   const config = loadConfig();
+
+  if (hasMacOsLibMpv()) {
+    return "libmpv";
+  }
 
   if (config.mpvPath && existsSync(config.mpvPath)) {
     return config.mpvPath;
@@ -91,13 +103,12 @@ function resolveMpvPathSync(): string | null {
 // Native window handle helper
 // ---------------------------------------------------------------------------
 
-function readNativeHandle(win: BrowserWindow): string {
+function readNativeHandle(win: BaseWindow): string {
   const handle = win.getNativeWindowHandle();
-  if (process.platform === "win32") {
-    if (handle.length >= 8) {
-      return handle.readBigUInt64LE(0).toString();
-    }
-    return handle.readUInt32LE(0).toString();
+  // On 64-bit systems (macOS always, Windows sometimes), pointers are 8 bytes.
+  // Reading only 4 bytes truncates the address and gives mpv an invalid --wid.
+  if (handle.length >= 8) {
+    return handle.readBigUInt64LE(0).toString();
   }
   return handle.readUInt32LE(0).toString();
 }
@@ -109,12 +120,41 @@ function readNativeHandle(win: BrowserWindow): string {
 // forwards all input to mpv via JSON IPC (mpv's own OSC is disabled).
 // ---------------------------------------------------------------------------
 
-function createMpvWindow(): BrowserWindow | null {
+function createMpvWindow(): { overlay: BrowserWindow; videoSurface: BaseWindow | null } | null {
   if (!mainWindow) return null;
 
   const bounds = mainWindow.getContentBounds();
+  const isMac = process.platform === "darwin";
 
-  const win = new BrowserWindow({
+  // On macOS, mpv cannot render behind a transparent BrowserWindow (Cocoa
+  // layer-backed views prevent it). So we create a separate non-transparent
+  // child window as the video surface for --wid, and put the transparent
+  // overlay on top. On Windows the single transparent window approach works.
+
+  let videoSurface: BaseWindow | null = null;
+
+  if (isMac) {
+    videoSurface = new BaseWindow({
+      parent: mainWindow,
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      frame: false,
+      transparent: false,
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      focusable: false,
+      skipTaskbar: true,
+      show: false,
+      backgroundColor: "#000000",
+    });
+    videoSurface.show();
+    console.log("[mpv-video-surface] created | bounds:", bounds, "| handle:", readNativeHandle(videoSurface));
+  }
+
+  const overlay = new BrowserWindow({
     parent: mainWindow,
     x: bounds.x,
     y: bounds.y,
@@ -136,17 +176,19 @@ function createMpvWindow(): BrowserWindow | null {
   });
 
   // Load transparent overlay with player controls
-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PLAYER_OVERLAY_HTML)}`);
-  win.show();
-  win.focus();
+  overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PLAYER_OVERLAY_HTML)}`);
+  overlay.show();
+  overlay.focus();
 
-  console.log("[mpv-window] created | bounds:", bounds, "| handle:", readNativeHandle(win));
+  console.log("[mpv-overlay] created | bounds:", bounds, "| handle:", readNativeHandle(overlay));
 
-  // Keep mpv window in sync when main window moves/resizes
+  // Keep windows in sync when main window moves/resizes
   const syncBounds = () => {
-    if (win.isDestroyed() || !mainWindow) return;
+    if (overlay.isDestroyed() || !mainWindow) return;
     const b = mainWindow.getContentBounds();
-    win.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+    const rect = { x: b.x, y: b.y, width: b.width, height: b.height };
+    if (videoSurface && !videoSurface.isDestroyed()) videoSurface.setBounds(rect);
+    overlay.setBounds(rect);
   };
   mainWindow.on("resize", syncBounds);
   mainWindow.on("move", syncBounds);
@@ -154,7 +196,7 @@ function createMpvWindow(): BrowserWindow | null {
   mainWindow.on("unmaximize", syncBounds);
   mainWindow.on("restore", syncBounds);
 
-  win.on("closed", () => {
+  const cleanupSync = () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.removeListener("resize", syncBounds);
       mainWindow.removeListener("move", syncBounds);
@@ -162,9 +204,11 @@ function createMpvWindow(): BrowserWindow | null {
       mainWindow.removeListener("unmaximize", syncBounds);
       mainWindow.removeListener("restore", syncBounds);
     }
-  });
+  };
+  overlay.on("closed", cleanupSync);
+  if (videoSurface) videoSurface.on("closed", cleanupSync);
 
-  return win;
+  return { overlay, videoSurface };
 }
 
 function destroyMpvWindow() {
@@ -172,6 +216,10 @@ function destroyMpvWindow() {
     mpvWindow.close();
   }
   mpvWindow = null;
+  if (mpvVideoWindow && !mpvVideoWindow.isDestroyed()) {
+    mpvVideoWindow.close();
+  }
+  mpvVideoWindow = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +486,43 @@ type MpvResponse = {
   event?: string;
 };
 
+type MpvController = {
+  command(args: unknown[]): Promise<MpvResponse>;
+  getProperty(name: string): Promise<unknown>;
+  setProperty(name: string, value: unknown): Promise<void>;
+  destroy(): void;
+  isAlive(): boolean;
+};
+
+class MacOsLibMpvController implements MpvController {
+  constructor(private playerId: number) {}
+
+  async command(args: unknown[]): Promise<MpvResponse> {
+    const addon = getLibMpvAddon();
+    return { data: addon.command(this.playerId, args) };
+  }
+
+  async getProperty(name: string): Promise<unknown> {
+    const addon = getLibMpvAddon();
+    return addon.getProperty(this.playerId, name);
+  }
+
+  async setProperty(name: string, value: unknown): Promise<void> {
+    const addon = getLibMpvAddon();
+    addon.setProperty(this.playerId, name, value);
+  }
+
+  destroy() {
+    const addon = getLibMpvAddon();
+    addon.destroyPlayer(this.playerId);
+  }
+
+  isAlive(): boolean {
+    const addon = getLibMpvAddon();
+    return addon.isAlive(this.playerId);
+  }
+}
+
 class MpvIpc {
   private socket: net.Socket | null = null;
   private pipeName: string;
@@ -532,6 +617,10 @@ class MpvIpc {
     this.socket = null;
     this.connected = false;
   }
+
+  isAlive(): boolean {
+    return this.connected;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -559,16 +648,22 @@ function stopProgressPolling() {
 function startProgressPolling() {
   stopProgressPolling();
   mpvProgressTimer = setInterval(async () => {
-    if (!mpvIpc || !mpvProcess) {
+    if (!mpvController || !mpvController.isAlive()) {
       stopProgressPolling();
       return;
     }
     try {
-      const [timePos, duration, pause] = await Promise.all([
-        mpvIpc.getProperty("time-pos"),
-        mpvIpc.getProperty("duration"),
-        mpvIpc.getProperty("pause"),
+      const [timePos, duration, pause, eofReached] = await Promise.all([
+        mpvController.getProperty("time-pos"),
+        mpvController.getProperty("duration"),
+        mpvController.getProperty("pause"),
+        mpvController.getProperty("eof-reached"),
       ]);
+      if (eofReached === true) {
+        killMpv(false);
+        mainWindow?.webContents.send("mpv:ended");
+        return;
+      }
       if (timePos != null) {
         const progress = {
           currentTime: timePos as number,
@@ -620,7 +715,9 @@ function createWindow() {
 
 function killMpv(notify = true) {
   stopProgressPolling();
-  mpvIpc?.destroy();
+  mpvController?.destroy();
+  mpvController = null;
+  mpvNativePlayerId = null;
   mpvIpc = null;
   if (mpvProcess) {
     const proc = mpvProcess;
@@ -643,10 +740,34 @@ function registerIpc() {
   ipcMain.handle("mpv:spawn", async (_event, options: { streamUrl: string; startTime?: number }) => {
     killMpv(false);
 
-    // Create transparent overlay window — mpv renders behind it via --wid,
-    // visible through the transparent Chromium layer. Controls are in the overlay.
-    mpvWindow = createMpvWindow();
-    const wid = mpvWindow ? readNativeHandle(mpvWindow) : null;
+    // Create player windows. On macOS we need a separate non-transparent
+    // surface for mpv --wid because Cocoa can't composite mpv behind a
+    // transparent layer. On Windows the overlay itself is used for --wid.
+    const mpvWindows = createMpvWindow();
+    if (mpvWindows) {
+      mpvWindow = mpvWindows.overlay;
+      mpvVideoWindow = mpvWindows.videoSurface;
+    }
+    // Use the video surface handle on macOS, overlay handle on Windows
+    const widTarget = mpvVideoWindow ?? mpvWindow;
+    const wid = widTarget ? readNativeHandle(widTarget) : null;
+    const rawHandle = widTarget?.getNativeWindowHandle();
+    console.log("[mpv] platform:", process.platform, "| handle buffer length:", rawHandle?.length, "| handle hex:", rawHandle?.toString("hex"), "| wid string:", wid);
+
+    if (process.platform === "darwin" && wid) {
+      try {
+        const addon = getLibMpvAddon();
+        const playerId = addon.createPlayer(wid);
+        mpvNativePlayerId = playerId;
+        mpvController = new MacOsLibMpvController(playerId);
+        addon.loadFile(playerId, options.streamUrl, options.startTime);
+        startProgressPolling();
+        return { ok: true, embedded: true };
+      } catch (err) {
+        killMpv(false);
+        throw err;
+      }
+    }
 
     spawnCounter++;
     const pipeName = getMpvPipeName(spawnCounter);
@@ -664,6 +785,12 @@ function registerIpc() {
 
     if (wid) {
       args.push(`--wid=${wid}`);
+      // On macOS, mpv's libmpv/cocoa-cb path is the documented embedding
+      // backend. The regular gpu VO still opens a detached window here.
+      if (process.platform === "darwin") {
+        args.push("--vo=libmpv");
+        args.push("--focus-on=never");
+      }
     } else {
       args.push("--force-window=yes");
     }
@@ -694,6 +821,7 @@ function registerIpc() {
       stopProgressPolling();
       mpvIpc?.destroy();
       mpvIpc = null;
+      mpvController = null;
       destroyMpvWindow();
       mainWindow?.webContents.send("mpv:ended");
     });
@@ -703,6 +831,7 @@ function registerIpc() {
       stopProgressPolling();
       mpvIpc?.destroy();
       mpvIpc = null;
+      mpvController = null;
       destroyMpvWindow();
     });
 
@@ -711,6 +840,7 @@ function registerIpc() {
       const ipc = new MpvIpc(pipeName);
       await ipc.connect();
       mpvIpc = ipc;
+      mpvController = ipc;
       console.log("[mpv] IPC connected to", pipeName);
 
       const vo = await ipc.getProperty("current-vo");
@@ -733,9 +863,9 @@ function registerIpc() {
 
   // ---- Send arbitrary command to mpv ----
   ipcMain.handle("mpv:command", async (_event, args: unknown[]) => {
-    if (!mpvIpc) return { error: "not connected" };
+    if (!mpvController) return { error: "not connected" };
     try {
-      const res = await mpvIpc.command(args);
+      const res = await mpvController.command(args);
       return { ok: true, data: res.data, error: res.error };
     } catch (err) {
       return { error: String(err) };
@@ -744,9 +874,9 @@ function registerIpc() {
 
   // ---- Get mpv property ----
   ipcMain.handle("mpv:get-property", async (_event, name: string) => {
-    if (!mpvIpc) return null;
+    if (!mpvController) return null;
     try {
-      return await mpvIpc.getProperty(name);
+      return await mpvController.getProperty(name);
     } catch {
       return null;
     }
@@ -754,9 +884,9 @@ function registerIpc() {
 
   // ---- Set mpv property ----
   ipcMain.handle("mpv:set-property", async (_event, name: string, value: unknown) => {
-    if (!mpvIpc) return { error: "not connected" };
+    if (!mpvController) return { error: "not connected" };
     try {
-      await mpvIpc.setProperty(name, value);
+      await mpvController.setProperty(name, value);
       return { ok: true };
     } catch (err) {
       return { error: String(err) };
@@ -765,9 +895,9 @@ function registerIpc() {
 
   // ---- Get track list ----
   ipcMain.handle("mpv:get-tracks", async () => {
-    if (!mpvIpc) return [];
+    if (!mpvController) return [];
     try {
-      const trackList = await mpvIpc.getProperty("track-list");
+      const trackList = await mpvController.getProperty("track-list");
       return trackList ?? [];
     } catch {
       return [];
