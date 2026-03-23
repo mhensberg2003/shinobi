@@ -25,6 +25,7 @@ linux:
 mac:
   target:
     - dmg
+    - zip
   category: public.app-category.entertainment
   icon: assets/icon.png
 win:
